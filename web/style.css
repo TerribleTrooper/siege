@@ -1,0 +1,727 @@
+:root {
+  --bg: #16130f;
+  --bg-soft: #211c16;
+  --panel: #2a241c;
+  --edge: #43392c;
+  --ink: #ece3d2;
+  --ink-dim: #a99c86;
+  --accent: #d8a93f;
+  --accent-ink: #231b0c;
+  --danger: #d1604c;
+  --silver: #c9d4e0;
+  --defender: #4c7fb8;
+  --attackerA: #b4503c;
+  --attackerB: #4f8c55;
+  --radius: 10px;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 50% -10%, #2d261c 0%, transparent 70%),
+    var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+.screen { padding: 24px 16px 40px; max-width: 1180px; margin: 0 auto; }
+.screen[hidden] { display: none; }
+
+.title {
+  font-size: clamp(32px, 7vw, 56px);
+  margin: 12px 0 4px;
+  letter-spacing: .04em;
+  text-align: center;
+  text-shadow: 0 2px 0 #0008;
+}
+.tagline { text-align: center; color: var(--ink-dim); max-width: 60ch; margin: 0 auto 28px; line-height: 1.5; }
+.code { color: var(--accent); font-variant-numeric: tabular-nums; letter-spacing: .18em; }
+
+.panels { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(290px, 1fr)); }
+
+.panel {
+  background: linear-gradient(180deg, var(--panel), var(--bg-soft));
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.panel h2 { margin: 0 0 6px; font-size: 20px; }
+.hint { color: var(--ink-dim); font-size: 14px; line-height: 1.45; margin: 0 0 14px; }
+
+label { display: block; font-size: 13px; color: var(--ink-dim); margin-bottom: 10px; }
+input {
+  display: block; width: 100%; margin-top: 4px; padding: 9px 11px;
+  background: #15110c; color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 8px; font: inherit;
+}
+input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+select {
+  display: block; width: 100%; margin-top: 4px; padding: 9px 8px;
+  background: #15110c; color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 8px; font: inherit;
+}
+select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* Место на одном экране: имя и кто за ним играет — человек или бот. */
+.pick-row { display: flex; gap: 6px; margin-top: 4px; }
+.pick-row input { margin-top: 0; min-width: 0; flex: 1; }
+.pick-row select { margin-top: 0; width: auto; flex: none; }
+/* Описание уровня меняется вместе с выбором: высота постоянная, чтобы
+   кнопка под ним не прыгала. */
+.level-hint { min-height: 4.4em; }
+
+button {
+  font: inherit; font-weight: 600; cursor: pointer;
+  padding: 10px 14px; border-radius: 8px;
+  border: 1px solid var(--edge); background: #342c22; color: var(--ink);
+}
+button:hover:not(:disabled) { border-color: var(--accent); }
+button:disabled { opacity: .45; cursor: not-allowed; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: #b4882c; }
+button.wide { width: 100%; }
+
+.divider { display: flex; align-items: center; gap: 10px; color: var(--ink-dim); font-size: 12px; margin: 14px 0; }
+.divider::before, .divider::after { content: ""; flex: 1; height: 1px; background: var(--edge); }
+
+.error { color: var(--danger); text-align: center; margin-top: 16px; }
+
+.rules { margin: 28px auto 0; max-width: 70ch; border-top: 1px solid var(--edge); padding-top: 14px; }
+.rules summary { cursor: pointer; color: var(--accent); }
+.rules-body p { color: var(--ink-dim); line-height: 1.55; font-size: 14px; }
+.rules-body b { color: var(--ink); }
+
+.players { list-style: none; padding: 0; max-width: 420px; margin: 0 auto 14px; }
+.players li {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; border: 1px solid var(--edge); border-radius: 8px;
+  background: var(--bg-soft); margin-bottom: 8px;
+}
+.players .dot { width: 9px; height: 9px; border-radius: 50%; background: #6e8f5a; }
+.players .dot.off { background: #6b5f4d; }
+/* Бот в лобби: отметка, уровень и кнопка «убрать» — вместо точки связи. */
+.players .tools { display: flex; align-items: center; gap: 6px; }
+.players .tools select { margin: 0; width: auto; padding: 4px 6px; font-size: 13px; }
+.players .tools button { padding: 4px 10px; }
+.bot-tag {
+  font-size: 11px; color: var(--ink-dim); border: 1px solid var(--edge);
+  border-radius: 6px; padding: 1px 6px; margin-left: 8px; white-space: nowrap;
+}
+/* Роль места: закреплена за ним на всю партию, поэтому видна уже в лобби —
+   той же полосой слева, что и на плашках в партии. */
+.players li.defender { border-left: 4px solid var(--defender); }
+.players li.attackerA { border-left: 4px solid var(--attackerA); }
+.players li.attackerB { border-left: 4px solid var(--attackerB); }
+.role-tag { font-size: 12px; color: var(--ink-dim); margin-left: 8px; white-space: nowrap; }
+.lobby-bot { display: flex; gap: 8px; max-width: 420px; margin: 0 auto 14px; }
+.lobby-bot[hidden] { display: none; }
+.lobby-bot select { margin: 0; flex: 1; }
+
+/* --- экран партии --- */
+
+/* Боковая колонка — 300px: в строке кошелька рядом с названием стоит цена в
+   двух валютах, и на 280px название начинало переноситься. */
+.game {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-areas: "top top" "board side";
+  gap: 14px;
+  height: 100vh;
+  height: 100dvh; /* на телефоне 100vh считается без панелей браузера */
+  padding: 12px max(12px, env(safe-area-inset-right)) max(12px, env(safe-area-inset-bottom))
+           max(12px, env(safe-area-inset-left));
+}
+
+/* Пульт партии: ход, чат и меню живут здесь, а не внизу боковой колонки —
+   туда приходилось листать мимо всего найма. Текст и значки белые: панель
+   тёмная, и читаться на ней всё должно с первого взгляда. */
+.topbar {
+  grid-area: top;
+  position: relative;
+  display: flex; align-items: center; gap: 12px;
+  background: var(--bg-soft); border: 1px solid var(--edge);
+  border-radius: var(--radius); padding: 8px 10px;
+  color: #fff;
+}
+.meter-label { font-size: 11px; text-transform: uppercase; letter-spacing: .09em; color: var(--ink-dim); }
+
+/* День осады — над полоской прошедших дней. */
+.progress { display: grid; gap: 2px; flex: none; font-size: 12px; line-height: 1.2; white-space: nowrap; }
+.progress-label { color: #ffffffb3; }
+.progress b { font-variant-numeric: tabular-nums; }
+.progress-bar { display: block; height: 3px; margin-top: 2px; background: #0f0d0a; border-radius: 2px; overflow: hidden; }
+.progress-bar i { display: block; height: 100%; width: 0; background: var(--accent); }
+
+/* Плашки игроков: сторона — полосой слева, ходящий — в золотой рамке.
+   Отдельная надпись «Ход: ваш» не нужна: рамку видно и так. */
+.seats { display: flex; gap: 6px; min-width: 0; }
+.seat {
+  display: grid; grid-template-columns: minmax(0, auto); align-items: baseline;
+  min-width: 0; border: 1px solid var(--edge); border-left-width: 4px;
+  border-radius: 8px; padding: 4px 10px; background: #221d16;
+  font-size: 13px; line-height: 1.25; white-space: nowrap;
+}
+.seat.defender { border-left-color: var(--defender); }
+.seat.attackerA { border-left-color: var(--attackerA); }
+.seat.attackerB { border-left-color: var(--attackerB); }
+.seat.active { background: #3a3020; border-color: var(--accent); }
+.seat .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; max-width: 9em; }
+.seat .initial { display: none; font-weight: 700; }
+.seat .role { grid-column: 1 / -1; font-size: 11px; color: #ffffffb3; }
+/* Место бота: пунктирная рамка — сразу видно, кто за ним не сидит. */
+.seat.bot { border-style: dashed; border-left-style: solid; }
+
+/* Кнопки-значки пульта: зоны обстрела, чат, меню. */
+.topbar-tools { display: flex; gap: 6px; margin-left: auto; }
+.icon-btn {
+  position: relative; width: 34px; height: 34px; padding: 0;
+  display: grid; place-items: center; background: #221d16; color: #fff;
+}
+.icon-btn .ico { width: 16px; height: 16px; }
+.icon-btn.active { background: #4a2a24; border-color: var(--danger); }
+.icon-btn.open { background: #3a3020; border-color: var(--accent); }
+/* Новое в чате: число поверх значка, пока чат закрыт. */
+.count {
+  position: absolute; top: -6px; right: -6px;
+  min-width: 17px; height: 17px; padding: 0 4px; border-radius: 9px;
+  background: var(--danger); color: #fff;
+  font-size: 11px; font-weight: 700; line-height: 17px; text-align: center;
+}
+.count[hidden] { display: none; }
+
+/* Ход: в свой — кнопка, в чужой — кто ходит. Золото на кнопке тёмное: на
+   светлом белая надпись не читается. */
+.end-turn {
+  flex: none; display: inline-flex; align-items: center; gap: 8px;
+  background: #8f6c22; border-color: var(--accent); color: #fff; white-space: nowrap;
+}
+.end-turn:hover:not(:disabled) { background: #a37b28; }
+.end-turn .end-short { display: none; }
+.end-turn kbd {
+  font: inherit; font-size: 11px; line-height: 1.4;
+  padding: 0 5px; border: 1px solid #ffffff66; border-radius: 4px;
+}
+.wait { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; }
+.wait .dot { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
+.timer { font-variant-numeric: tabular-nums; }
+.end-turn[hidden], .wait[hidden], .timer[hidden], .end-turn kbd[hidden] { display: none; }
+
+/* Выпадающие окна пульта — чат и меню. Справа под панелью: на широком
+   экране они ложатся на боковую колонку, а не на поле. */
+.drop {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 20;
+  background: var(--panel); border: 1px solid #6b5a40; border-radius: var(--radius);
+  box-shadow: 0 12px 30px #000a; color: var(--ink);
+}
+.drop[hidden] { display: none; }
+.chat-drop { width: min(300px, calc(100vw - 24px)); padding: 10px; }
+.menu-drop { display: grid; gap: 2px; padding: 4px; min-width: 210px; }
+.menu-drop button {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 10px; text-align: left; font-weight: 500;
+  background: transparent; border-color: transparent; color: #fff;
+}
+.menu-drop button:hover:not(:disabled) { background: #3a3020; border-color: transparent; }
+.menu-drop .bad { color: #ff9c88; }
+/* Боты партии в меню: уровень меняется прямо здесь, без отдельного окна. */
+.menu-bots { display: grid; gap: 6px; padding: 8px 10px; margin: 2px 0; border-block: 1px solid var(--edge); }
+.menu-bots[hidden] { display: none; }
+.menu-bots h4 { margin: 0; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .09em; color: var(--ink-dim); }
+.menu-bots .row { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.menu-bots .row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-bots select { margin: 0; width: auto; padding: 4px 6px; font-size: 13px; }
+.menu-drop .menu-bots button { width: auto; padding: 4px 10px; font-weight: 600; border-color: var(--edge); background: #342c22; }
+/* Зоны обстрела в меню — только на узком экране, где их значок не влез. */
+.menu-drop .menu-threat { display: none; }
+.menu-threat[aria-pressed="true"]::after { content: "✓"; margin-left: auto; color: var(--accent); }
+
+/* Поле и строка под ним: строка не ложится поверх клеток, а забирает у
+   холста свою высоту. Высота у неё постоянная — иначе карта прыгала бы
+   при каждом наведении. */
+.board-wrap {
+  grid-area: board; position: relative; min-height: 320px;
+  display: flex; flex-direction: column; gap: 6px;
+}
+/* Только холст поля: иконки отрядов — тоже canvas, и под общим правилом
+   фишка-ромб или круг сидела бы в тёмном квадрате с рамкой. */
+#board {
+  width: 100%; height: 100%;
+  background: #0f0d0a;
+  border: 1px solid var(--edge); border-radius: var(--radius);
+  display: block; cursor: pointer;
+  touch-action: manipulation;
+}
+/* Долгое нажатие — осмотр клетки, а не выделение и не меню картинки. */
+.board-wrap canvas {
+  flex: 1 1 0; min-height: 0; height: auto;
+  -webkit-touch-callout: none; -webkit-user-select: none; user-select: none;
+}
+.cell-strip {
+  flex: none; height: 32px; margin: 0; padding: 0 12px;
+  display: flex; align-items: center;
+  background: var(--bg-soft); border: 1px solid var(--edge); border-radius: var(--radius);
+  font-size: 13px; color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.cell-strip.idle { color: var(--ink-dim); }
+
+.toast {
+  position: absolute; left: 50%; bottom: 52px; transform: translateX(-50%);
+  background: #3a1f1a; border: 1px solid var(--danger); color: #ffd9d0;
+  padding: 8px 14px; border-radius: 8px; font-size: 14px; max-width: 90%;
+  box-shadow: 0 6px 20px #0008;
+}
+
+.side {
+  grid-area: side;
+  display: flex; flex-direction: column; gap: 12px;
+  overflow-y: auto; padding-right: 2px;
+}
+
+/* Строка состояния: чья это панель и сколько осталось очков действия. */
+.status {
+  display: grid; gap: 8px;
+  background: var(--bg-soft); border: 1px solid var(--edge);
+  border-radius: var(--radius); padding: 10px 12px;
+}
+.status-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.status-row b { font-size: 15px; font-variant-numeric: tabular-nums; }
+/* Король: пока цел — спокойная строка, на половине здоровья — тревога. */
+.status .king { margin-left: auto; font-size: 12px; color: #f0ce6e; }
+.status .king.hurt { color: #e06a56; font-weight: 700; }
+.pips { display: flex; gap: 4px; margin-left: auto; }
+.pip { width: 9px; height: 9px; border-radius: 50%; border: 1px solid #6b5f4d; }
+.pip.on { background: var(--ink); border-color: var(--ink); }
+/* Очки, которые уйдут на действие под курсором: видно до клика. */
+.pip.spend { background: transparent; border-color: var(--accent); }
+.status-row.idle .pips, .status-row.idle b { opacity: .45; }
+
+/* Кошелёк: ресурс, остаток и доход наверху, траты этим ресурсом — внутри. */
+.wallet {
+  background: var(--bg-soft); border: 1px solid var(--edge);
+  border-radius: var(--radius); padding: 12px;
+}
+.wallet.silver { border-color: #5d6a78; }
+.wallet-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.wallet-head .ico { align-self: center; width: 14px; height: 14px; }
+.wallet-name { font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-dim); }
+.wallet-head b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.wallet.supplies .wallet-head b, .wallet.supplies .wallet-head .ico { color: var(--accent); }
+.wallet.silver .wallet-head b, .wallet.silver .wallet-head .ico { color: var(--silver); }
+/* «6 → 3» — сколько останется после действия под курсором. */
+.wallet .wallet-head b.preview { color: var(--ink); }
+.wallet-sub { font-size: 12px; color: var(--ink-dim); }
+.wallet-income { margin-left: auto; font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.wallet-bar { height: 4px; margin: 8px 0 4px; background: #15110c; border-radius: 2px; overflow: hidden; }
+.wallet-bar i { display: block; height: 100%; background: var(--accent); }
+.wallet-note { margin: 4px 0 0; font-size: 11px; line-height: 1.4; color: var(--ink-dim); }
+.wallet-note:empty, .wallet-note[hidden] { display: none; }
+.wallet-wait { margin: 10px 0 0; font-size: 13px; }
+.group { margin-top: 12px; }
+.group h4 {
+  display: flex; align-items: baseline; gap: 8px; margin: 0 0 6px;
+  font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink);
+}
+.limits {
+  margin-left: auto; text-align: right;
+  font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: var(--ink-dim);
+}
+.limits.full { color: #e06a56; }
+.wallet.ap .shop-list { margin-top: 10px; }
+
+/* Значки ресурсов: одна форма на ресурс — и в шапке кошелька, и на ценниках.
+   Маска вместо картинки, чтобы цвет брался из currentColor. */
+.ico {
+  display: inline-block; flex: none; width: 12px; height: 12px;
+  background: currentColor;
+  -webkit-mask: var(--ico) center / contain no-repeat;
+  mask: var(--ico) center / contain no-repeat;
+}
+.ico.supplies { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 1h4L9 3.2c3 1 5 4.2 5 7.3C14 13.6 11.6 15 8 15s-6-1.4-6-4.5C2 7.4 4 4.2 7 3.2z'/%3E%3C/svg%3E"); }
+.ico.silver { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 1a7 7 0 1 0 0 14A7 7 0 1 0 8 1zm0 2a5 5 0 1 1 0 10A5 5 0 1 1 8 3zm0 1.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 1 0 0-7z'/%3E%3C/svg%3E"); }
+.ico.ap { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M9.5 1 3 9h4.5l-1 6L13 7H8.5z'/%3E%3C/svg%3E"); }
+/* Значки пульта: мишень — зоны обстрела, облачко — чат, три точки — меню. */
+.ico.threat { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath fill-rule='evenodd' d='M8 1a7 7 0 1 0 0 14A7 7 0 1 0 8 1zm0 1.6a5.4 5.4 0 1 0 0 10.8A5.4 5.4 0 1 0 8 2.6zm0 1.6a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 1 0 0-7.6zm0 1.6a2.2 2.2 0 1 0 0 4.4 2.2 2.2 0 1 0 0-4.4zM8 7a1 1 0 1 0 0 2 1 1 0 1 0 0-2z'/%3E%3C/svg%3E"); }
+.ico.chat { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 2h10a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H8.5L5 14.6V12H3a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z'/%3E%3C/svg%3E"); }
+.ico.dots { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 6.5a1.5 1.5 0 1 0 0 3 1.5 1.5 0 1 0 0-3zm4.5 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 1 0 0-3zm4.5 0a1.5 1.5 0 1 0 0 3 1.5 1.5 0 1 0 0-3z'/%3E%3C/svg%3E"); }
+.ico.book { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 2.5A1.5 1.5 0 0 1 3.5 1H14v10.5H3.6a1.1 1.1 0 0 0 0 2.2H14V15H3.5A1.5 1.5 0 0 1 2 13.5z'/%3E%3C/svg%3E"); }
+.ico.leave { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M2 1.5h7V5H7.5V3h-4v10h4v-2H9v3.5H2zM11 4.5 14.5 8 11 11.5V9H6V7h5z'/%3E%3C/svg%3E"); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* Голосовая связь */
+.voice-row { display: flex; gap: 6px; margin-bottom: 8px; }
+.voice-row button { flex: 1; padding: 8px 10px; font-size: 13px; }
+.voice-list { list-style: none; margin: 0; padding: 0; font-size: 13px; }
+.voice-list li {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 0; color: var(--ink-dim);
+}
+.voice-list .bulb {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: #6b5f4d; flex: none;
+}
+.voice-list li.on { color: var(--ink); }
+.voice-list li.on .bulb { background: #6e8f5a; }
+.voice-list li.speaking .bulb { background: var(--accent); box-shadow: 0 0 0 3px #d8a93f33; }
+.voice-list li.me { font-style: italic; }
+.voice-error { color: var(--danger); margin: 6px 0 0; }
+
+/* Каналы чата делят одну панель: боковая колонка не резиновая. */
+.tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+.tab {
+  flex: 1; padding: 5px 8px; font-size: 12px; text-transform: uppercase;
+  letter-spacing: .06em; color: var(--ink-dim); background: #221d16;
+  position: relative;
+}
+.tab.active { color: var(--ink); border-color: var(--accent); background: #3a3020; }
+.badge {
+  position: absolute; top: 3px; right: 5px;
+  width: 7px; height: 7px; border-radius: 50%; background: var(--accent);
+}
+
+/* Потолок обоза должен бросаться в глаза — иначе пропавший излишек
+   припасов выглядит ошибкой сервера. */
+#hud-cap.full { color: #e06a56; }
+
+/* Выход из комнаты: кнопка нужная, но не та, по которой надо попадать случайно. */
+.quiet { background: transparent; color: var(--ink-dim); border-color: #3a3028; }
+.quiet:hover { color: var(--ink); border-color: var(--accent); }
+.players li.left span:first-child { text-decoration: line-through; opacity: .6; }
+
+/* Воодушевление: пока действует, его видно и в лавке, и в строке состояния.
+   Повторно его не купить, но гасить строку нельзя — она подсвечена. */
+.shop-item.lit, .shop-item.lit.blocked { border-color: var(--accent); background: #3a3020; color: var(--ink); cursor: default; }
+.shop-item.lit.blocked .chip { opacity: 1; }
+.rally-on { color: var(--accent); font-weight: 700; }
+
+/* Каналы чата: общий и осадный — второй виден только осаждающим. display
+   у .tabs перебивает атрибут hidden — гасим явно, иначе замок видит вкладку. */
+.channels { margin-bottom: 0; }
+.channels[hidden] { display: none; }
+.channels .tab { font-size: 11px; padding: 4px 6px; }
+.channels .tab.siege.active { border-color: #b4503c; background: #3a241e; }
+
+.chat-pane { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
+.chat-pane[hidden] { display: none; }
+.chat-pane ul { list-style: none; margin: 0; padding: 0; font-size: 13px; line-height: 1.45; max-height: 220px; overflow-y: auto; }
+.chat-pane li { padding: 4px 0; border-bottom: 1px solid #ffffff0d; word-break: break-word; }
+.chat-pane li b { color: var(--ink); }
+.chat-pane li.defender b { color: #9cc3ea; }
+.chat-pane li.attackerA b { color: #e8a393; }
+.chat-pane li.attackerB b { color: #a6d6a9; }
+.chat-pane .empty { color: var(--ink-dim); border: 0; }
+
+.chat-form { display: flex; gap: 6px; }
+.chat-form input { margin-top: 0; }
+.chat-form button { padding: 8px 12px; }
+
+.card, .shop {
+  background: var(--bg-soft); border: 1px solid var(--edge);
+  border-radius: var(--radius); padding: 12px;
+}
+.shop h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--ink-dim); }
+
+/* Карточка: выбранный отряд или осмотренная клетка. Шапка — значок, имя с
+   подписью, прочность и крестик; ниже — числа, метки и разделы. */
+.card { border-color: #5a4c3a; }
+.card-head { display: flex; align-items: center; gap: 8px; }
+.card-title { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; line-height: 1.25; }
+.card-title small { font-size: 11px; font-weight: 400; color: var(--ink-dim); }
+.card-close {
+  flex: none; padding: 0 6px; font-size: 18px; line-height: 1.2;
+  background: transparent; border-color: transparent; color: var(--ink-dim);
+}
+.card-close:hover:not(:disabled) { color: var(--ink); border-color: var(--edge); }
+.hp { flex: none; display: flex; align-items: center; gap: 6px; }
+.hp-bar { width: 56px; height: 5px; background: #15110c; border-radius: 3px; overflow: hidden; }
+.hp-bar i { display: block; height: 100%; background: #7fb069; }
+.hp-bar.mid i { background: #e3b452; }
+.hp-bar.low i { background: #e06a56; }
+.hp small { font-size: 12px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.card-stats, .card-legend { margin: 8px 0 0; font-size: 12px; line-height: 1.4; color: var(--ink-dim); }
+.card-legend.warn { color: #e3b452; }
+.tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+.tag { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: #34302a; color: var(--ink); }
+.tag.go { background: #2f3a2a; color: #b9d4a8; }
+.tag.hit { background: #3d2622; color: #f0b3a5; }
+.tag.spent { color: var(--ink-dim); }
+.tag.ambush, .tag.vet { background: #3a3020; color: #f0ce6e; }
+.card-sec { margin-top: 10px; }
+.card-sec h4 {
+  margin: 0 0 3px; font-size: 11px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--ink-dim);
+}
+.card-sec p { margin: 0 0 3px; font-size: 13px; line-height: 1.4; }
+.card-back { width: 100%; margin-top: 10px; padding: 6px 10px; font-size: 13px; }
+
+.shop-list { display: grid; gap: 6px; }
+/* Строка кошелька: значок — название и цифры — цена во всех валютах. Если
+   сейчас нельзя, ниже сказано почему: полоска накопления для валюты, слова —
+   для остального. */
+.shop-item {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center; column-gap: 8px; row-gap: 3px;
+  width: 100%; text-align: left; padding: 8px 10px; font-size: 14px;
+}
+.shop-item.has-icon { grid-template-columns: 26px minmax(0, 1fr) auto; }
+.shop-item.active { border-color: var(--accent); background: #3a3020; }
+.item-name { line-height: 1.3; }
+.item-meta { font-size: 11px; font-weight: 400; color: var(--ink-dim); white-space: nowrap; }
+/* Всё под первой строкой — во всю ширину кнопки, под значком тоже. */
+.item-sub, .item-why, .item-need { grid-column: 1 / -1; }
+.item-sub { color: var(--ink-dim); font-weight: 400; font-size: 12px; line-height: 1.35; }
+.item-why { color: #e3b452; font-weight: 400; font-size: 12px; line-height: 1.35; }
+.item-need { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
+.item-need small { flex: none; color: var(--ink-dim); font-weight: 400; font-size: 11px; }
+.need-bar { flex: 1 1 auto; min-width: 24px; height: 3px; background: #15110c; border-radius: 2px; overflow: hidden; }
+.need-bar i { display: block; height: 100%; background: var(--accent); }
+.need-bar.silver i { background: var(--silver); }
+.price { flex: none; display: flex; gap: 4px; align-items: center; }
+.chip {
+  display: inline-flex; align-items: center; gap: 2px;
+  padding: 2px 5px; border-radius: 6px;
+  font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.chip.supplies { color: var(--accent); background: #3a3020; }
+.chip.silver { color: var(--silver); background: #2b3036; }
+.chip.ap { color: var(--ink); background: #3b342a; }
+/* Недоступная строка остаётся кнопкой: клик объясняет причину. Гасим её
+   мягче, чем :disabled, — текст причины должен читаться. */
+.shop-item.blocked { background: #2a241c; color: var(--ink-dim); cursor: help; }
+.shop-item.blocked .chip, .shop-item.blocked .unit-icon { opacity: .55; }
+.shop-item.blocked:hover { border-color: #5a4c3a; }
+
+
+.overlay {
+  position: fixed; inset: 0; background: #0b0906d9;
+  display: grid; place-items: center; padding: 20px;
+  /* Выше прилипшего пульта и плавающей кнопки хода, иначе они всплывают
+     поверх открытых правил. */
+  z-index: 50;
+}
+/* display у .overlay перебивает атрибут hidden — гасим явно. */
+.overlay[hidden] { display: none; }
+.overlay-card {
+  background: var(--panel); border: 1px solid var(--accent);
+  border-radius: 14px; padding: 26px; max-width: 460px; width: 100%;
+  text-align: center;
+}
+.overlay-card h2 { margin: 0 0 8px; }
+/* Правила посреди партии: длинный текст листается внутри карточки. */
+.rules-card { max-width: 640px; max-height: min(85vh, 760px); overflow-y: auto; text-align: left; }
+.rules-card button { display: block; margin: 8px auto 0; }
+.points { list-style: none; padding: 0; margin: 16px 0 20px; }
+.points li { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px solid var(--edge); }
+.points .gain { color: var(--accent); font-weight: 700; }
+.points small { color: var(--ink-dim); margin-left: 4px; }
+
+/* Карта 28×22 широкая: пока окно уже этого порога, боковая колонка
+   отбирает у неё слишком много ширины — уводим её под поле. */
+@media (max-width: 1150px) {
+  .game {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "top" "board" "side";
+    height: auto;
+  }
+  /* Высоту считаем от ширины карты, чтобы не оставалось пустых полей. */
+  .board-wrap { height: min(72vh, 80vw); }
+  .side { overflow: visible; }
+  /* Страница теперь листается целиком: пульт прилипает к верху, чтобы ход
+     и чат оставались под рукой и у найма в самом низу. */
+  .topbar { position: sticky; top: 0; z-index: 15; box-shadow: 0 6px 16px #0009; }
+}
+
+/* Узкий пульт: имена игроков — буквой, на совсем узком — короче подписи,
+   а зоны обстрела уходят в меню. */
+@media (max-width: 760px) {
+  .seat { padding: 4px 8px; }
+  .seat .name, .seat .role { display: none; }
+  .seat .initial { display: inline; }
+}
+@media (max-width: 520px) {
+  .topbar { gap: 8px; padding: 6px 8px; }
+  .progress-label, .wait-word, .end-turn .end-long { display: none; }
+  .end-turn .end-short { display: inline; }
+  #end-key, #btn-threat { display: none; }
+  .menu-drop .menu-threat { display: flex; }
+}
+
+/* Под полем панель растягивается на всю ширину: строки кошелька в одну
+   колонку становятся слишком длинными — раскладываем их в несколько. */
+@media (min-width: 700px) and (max-width: 1150px) {
+  .wallet .shop-list { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .board-wrap { height: min(60vh, 110vw); }
+  /* На телефоне строке под полем тесно в одну линию — даём две, но высоту
+     держим постоянной, чтобы карта не прыгала. */
+  .cell-strip { display: block; height: 46px; padding: 5px 10px; line-height: 18px; white-space: normal; }
+  .toast { bottom: 64px; }
+}
+
+/* Иконка отряда: та же фигурка, что на карте. В лавке и в панели выбора
+   она отвечает на вопрос «кто это», не заставляя читать подпись. */
+.unit-icon {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  image-rendering: auto;
+}
+.unit-icon.big { width: 30px; height: 30px; }
+
+/* Заложить заряд — действие без отката: подрывник гибнет вместе с сегментом.
+   Кнопка должна выглядеть соответственно. */
+.shop-item.danger { border-color: #8d4436; }
+.shop-item.danger .item-name { color: #ffd9cf; }
+.shop-item.danger:hover:not(.blocked) { background: #4a2a22; }
+/* Бесплатное действие: цена «даром», а не пустое место. */
+.chip.free { color: #b9d4a8; background: #2f3a2a; font-weight: 600; }
+
+/* Экипаж осадной башни: список того, кто внутри. Виден только её хозяину —
+   сервер чужой экипаж и не присылает. */
+.cargo { width: 100%; margin-top: 8px; display: grid; gap: 4px; }
+.cargo-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 4px 8px; font-size: 13px; text-align: left;
+}
+.cargo-row small { display: block; color: var(--ink-dim); font-size: 11px; }
+.cargo-row.active { border-color: var(--accent); }
+
+/* --- музыка --------------------------------------------------------------
+   Пульт громкости: на главном экране и в лобби висит в углу, в партии его
+   прячут и показывают ту же пару кнопка+ползунок в меню «⋯». */
+
+.ico.music { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6 4.1 14 2.2v2.2L6 6.3z'/%3E%3Crect x='5' y='3.6' width='1.4' height='8'/%3E%3Crect x='12.6' y='1.8' width='1.4' height='8'/%3E%3Ccircle cx='3.6' cy='12' r='2.2'/%3E%3Ccircle cx='11.2' cy='10.2' r='2.2'/%3E%3C/svg%3E"); }
+.ico.mute { --ico: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 2 4.4 5H2v6h2.4L8 14z'/%3E%3Cpath d='M10.3 6.1 11.7 7.5 13.1 6.1 14.2 7.2 12.8 8.6 14.2 10 13.1 11.1 11.7 9.7 10.3 11.1 9.2 10 10.6 8.6 9.2 7.2z'/%3E%3C/svg%3E"); }
+
+.music-pill {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  background: #211c16cc;
+  backdrop-filter: blur(6px);
+  opacity: .5;
+  transition: opacity .18s;
+}
+.music-pill:hover,
+.music-pill:focus-within { opacity: 1; }
+.music-pill[hidden],
+.music-pill.gone { display: none; }
+
+.music-btn.off .ico { opacity: .55; }
+.music-pill .icon-btn { border-color: transparent; background: transparent; }
+.music-pill .icon-btn:hover { background: #3a3020; }
+
+.music-vol {
+  -webkit-appearance: none;
+  appearance: none;
+  display: block;
+  width: 76px;
+  height: 12px;      /* по бегунку; дорожку рисуем фоном по центру */
+  margin: 0;
+  padding: 0;        /* общий стиль input добавляет 9px и раздувает коробку */
+  border: 0;
+  border-radius: 0;
+  background:
+    linear-gradient(to right, var(--accent) 0 var(--fill, 60%), var(--edge) var(--fill, 60%) 100%)
+    center / 100% 4px no-repeat;
+  cursor: pointer;
+}
+.music-vol::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--ink);
+}
+.music-vol::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 0;
+  background: var(--ink);
+}
+.music-vol:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+.menu-drop .menu-music[hidden] { display: none; }
+.menu-drop .menu-music {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 8px 2px 0;
+}
+.menu-drop .menu-music button { flex: 1; width: auto; }
+.menu-drop .menu-music .music-vol { flex: 0 0 76px; }
+
+/* На узком экране пульт сжимается до одной кнопки: ползунок там всё равно
+   не попасть пальцем, а громкость в партии есть в меню «⋯». */
+@media (max-width: 700px) {
+  .music-pill { padding: 4px; gap: 0; opacity: .72; }
+  .music-pill .music-vol { display: none; }
+}
+
+/* --- телефон -------------------------------------------------------------
+   Правки, после которых в партию играется пальцем: самая частая кнопка —
+   у большого пальца, карточка отряда не прячется под пультом, редкий голос
+   не занимает лучшее место под полем, и ничего не уезжает под панели
+   браузера. Поле приближается щипком — это в app.js. */
+
+@media (max-width: 1150px) {
+  /* Пульт прилипает к верху, поэтому всё, что подтягиваем прокруткой,
+     должно останавливаться под ним, а не за ним. */
+  html { scroll-padding-top: 64px; }
+  .card { scroll-margin-top: 64px; scroll-margin-bottom: 14px; }
+  /* Голосовая связь нужна раз в партию, а место занимает лучшее — сразу
+     под полем. Уводим в конец колонки; порядок в разметке не трогаем. */
+  .side > #voice { order: 9; }
+  .side { padding-bottom: env(safe-area-inset-bottom); }
+}
+
+@media (max-width: 700px) {
+  /* «Ход» — самое частое действие партии, а живёт в верхнем правом углу,
+     куда на телефоне не дотянуться большим пальцем. Переносим вниз. */
+  .end-turn {
+    position: fixed; right: 14px; z-index: 30;
+    bottom: calc(14px + env(safe-area-inset-bottom));
+    padding: 13px 20px; border-radius: 999px;
+    box-shadow: 0 8px 20px #000a;
+  }
+  /* Под плавающей кнопкой должен оставаться воздух, иначе она накрывает
+     последнюю строку найма. */
+  .side { padding-bottom: calc(78px + env(safe-area-inset-bottom)); }
+  #voice { padding-top: 10px; padding-bottom: 10px; }
+  #voice h3 { margin-bottom: 6px; }
+}
+
+@media (max-width: 560px) {
+  /* Имя ходящего может быть любой длины — пульту нельзя из-за него
+     разъезжаться: «Создатель создателя всег» и так ни о чём. */
+  #hud-turn {
+    display: inline-block; max-width: 7.5em; vertical-align: bottom;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Строки найма и стройки: тот же текст, но вдвое больше их влезает на
+     экран — меньше прокрутки между решением и полем. */
+  .shop-item { padding: 6px 8px; font-size: 13px; }
+  .shop-item.has-icon { grid-template-columns: 22px minmax(0, 1fr) auto; }
+  .item-sub, .item-why { font-size: 11px; line-height: 1.3; }
+  .voice-list li { padding: 3px 0; }
+  .voice-list li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}

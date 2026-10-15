@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "siege",
+      "runtimeExecutable": "env",
+      "runtimeArgs": ["SIEGE_WEB_DIR=web", "SIEGE_LOG_LEVEL=debug", "./bin/siege"],
+      "port": 8080,
+      "autoPort": true
+    }
+  ]
+}

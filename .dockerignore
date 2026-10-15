@@ -1,0 +1,10 @@
+.git
+.github
+bin
+docs
+deploy
+.claude
+*.md
+.env
+.env.*
+!.env.example

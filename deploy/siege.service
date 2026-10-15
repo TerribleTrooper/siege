@@ -1,0 +1,48 @@
+# Юнит для запуска без Docker. Установка: см. deploy/install.sh и docs/DEPLOY.md.
+[Unit]
+Description=Осада — пошаговая игра на троих
+Documentation=file:/opt/siege/docs/DEPLOY.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=siege
+Group=siege
+WorkingDirectory=/opt/siege
+ExecStart=/opt/siege/siege
+# Файл может отсутствовать — дефолтов хватает для старта.
+EnvironmentFile=-/etc/siege.env
+
+Restart=always
+RestartSec=2
+# Корректное завершение: сервер сам дожидается активных запросов.
+KillSignal=SIGTERM
+TimeoutStopSec=20
+
+# Ограничения: приложению нужны только сеть и собственный каталог.
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectClock=true
+RestrictAddressFamilies=AF_INET AF_INET6
+RestrictNamespaces=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+LimitNOFILE=65536
+
+# Логи уходят в journald: journalctl -u siege -f
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

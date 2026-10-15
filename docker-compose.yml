@@ -1,0 +1,28 @@
+# Вариант запуска на VM через Docker. Второй вариант — systemd без Docker,
+# см. deploy/siege.service и docs/DEPLOY.md.
+services:
+  siege:
+    build:
+      context: .
+      args:
+        VERSION: ${VERSION:-dev}
+    image: siege:${VERSION:-dev}
+    container_name: siege
+    restart: unless-stopped
+    # Наружу порт не выставляем: перед приложением стоит nginx с TLS.
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - .env
+    environment:
+      SIEGE_ADDR: ":8080"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
