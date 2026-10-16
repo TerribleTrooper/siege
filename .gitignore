@@ -1,7 +1,90 @@
+# ---- Build output ----
 bin/
 dist/
-.env
-.env.local
-*.log
-.DS_Store
 build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+siege
+siege-*
+
+# ---- Go ----
+*.test
+*.out
+coverage.out
+coverage.html
+*.prof
+cpu.pprof
+mem.pprof
+vendor/
+go.work
+go.work.sum
+
+# ---- Env / secrets ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+!deploy/**/*.example
+
+# ---- Logs / runtime data ----
+*.log
+logs/
+tmp/
+*.pid
+*.sqlite
+*.db
+data/
+snapshots/
+
+# ---- macOS ----
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+Icon?
+
+# ---- Windows ----
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.stackdump
+*.lnk
+
+# ---- Linux ----
+*~
+.directory
+.Trash-*
+.nfs*
+
+# ---- IDE / editors ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*.iml
+*.sublime-workspace
+.history/
+
+# ---- Node (если появятся тулзы для web/) ----
+node_modules/
+npm-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# ---- Claude Code ----
+.claude/settings.local.json
