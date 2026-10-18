@@ -22,6 +22,8 @@ type createRoomRequest struct {
 	Names [3]string `json:"names"` // hotseat: три имени сразу
 	// Bots — hotseat: уровень бота для каждого места, пусто — человек.
 	Bots [3]string `json:"bots"`
+	// Map — ключ карты: classic | split. Пусто — классическая.
+	Map string `json:"map"`
 }
 
 type joinResponse struct {
@@ -42,7 +44,7 @@ func (s *Server) handleCreateRoom(w http.ResponseWriter, r *http.Request) {
 		mode = room.ModeOnline
 	}
 
-	rm, err := s.rooms.Create(mode)
+	rm, err := s.rooms.Create(mode, strings.ToLower(strings.TrimSpace(req.Map)))
 	if err != nil {
 		writeRoomError(w, err)
 		return

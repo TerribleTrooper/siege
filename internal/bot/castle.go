@@ -17,7 +17,7 @@ type castlePlan struct {
 	threats []P     // откуда войдут: проломы, решётки, верх лестниц, враги внутри
 	inside  []*unit // враги в замке и в проломах
 	alarm   bool    // враг уже внутри
-	front   int     // столбец, у которого враг ближе всего к стене
+	front   P       // участок кладки, у которого враг жмётся сильнее всего
 	safety  *field  // далеко ли клетки замка от ближайшей угрозы
 	ev      *judge
 	roles   map[int]role
@@ -48,32 +48,44 @@ func (b *Bot) castlePlan(w *world) *castlePlan {
 			pl.king = u
 		}
 	}
-	for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-		if w.opening(col) {
-			pl.threats = append(pl.threats, P{X: col, Y: game.WallRow})
+	for p := range w.seg {
+		if w.openingAt(p) {
+			pl.threats = append(pl.threats, p)
 		}
 	}
 	for _, e := range w.foes {
 		switch {
-		case insideCastle(e.Pos) || tileAt(e.Pos) == game.TileWall:
+		case w.insideCastle(e.Pos) || w.tile(e.Pos) == game.TileWall:
 			pl.inside = append(pl.inside, e)
 			pl.threats = append(pl.threats, e.Pos)
-		case e.typ == game.UnitLadder && e.Pos.Y == game.WallRow+1:
-			pl.threats = append(pl.threats, P{X: e.Pos.X, Y: game.WalkRow})
-		case e.typ == game.UnitSiegeTower && e.Pos.Y == game.WallRow+1:
-			for dx := -1; dx <= 1; dx++ {
-				pl.threats = append(pl.threats, P{X: e.Pos.X + dx, Y: game.WalkRow})
+		case e.typ == game.UnitLadder || e.typ == game.UnitSiegeTower:
+			// Приставленная лестница и подведённая башня — это завтрашний
+			// отряд на боевом ходу: встречаем его там, где он поднимется.
+			if top, ok := w.ladderTop(e.Pos); ok {
+				pl.threats = append(pl.threats, top)
+				for _, o := range dirs {
+					if n := top.Add(o[0], o[1]); w.tile(n) == game.TileWalk {
+						pl.threats = append(pl.threats, n)
+					}
+				}
 			}
-		case e.typ == game.UnitBomber && e.Pos.Y <= game.WallRow+3:
+		case e.typ == game.UnitBomber && w.wallDist(e.Pos) <= 3:
 			// Подрывник у стены — это пролом уже завтра: король уходит
 			// заранее, а не когда в проломе покажутся мечи.
-			for dx := -1; dx <= 1; dx++ {
-				if w.intact(e.Pos.X + dx) {
-					pl.threats = append(pl.threats, P{X: e.Pos.X + dx, Y: game.WalkRow})
+			for _, p := range w.segsByDist(e.Pos) {
+				if game.Chebyshev(p, e.Pos) > 2 {
+					break
+				}
+				if !w.intactAt(p) {
+					continue
+				}
+				if top, ok := w.walkBehind(p); ok {
+					pl.threats = append(pl.threats, top)
 				}
 			}
 		}
 	}
+	sortPts(pl.threats)
 	pl.alarm = len(pl.inside) > 0
 	pl.front = b.front(w)
 	if len(pl.threats) > 0 {
@@ -84,30 +96,47 @@ func (b *Bot) castlePlan(w *world) *castlePlan {
 	return pl
 }
 
-// front — столбец, где враг ближе всего к стене: туда тянутся стрелки.
-// Ближние к стене весят больше дальних.
-func (b *Bot) front(w *world) int {
-	sum, wsum := 0.0, 0.0
-	for _, e := range w.foes {
-		if e.Pos.Y <= game.WallRow {
-			continue
+// front — участок кладки, где враг ближе всего: туда тянутся стрелки.
+// Ближние к стене весят больше дальних, а на кольце «столбца» нет — есть
+// сегмент, к которому они жмутся.
+func (b *Bot) front(w *world) P {
+	// Где давят сильнее всего: каждый враг снаружи тянет к себе ближние
+	// сегменты, и чем он ближе к стене, тем сильнее тянет. Выигрывает не
+	// середина между двумя осаждающими, а тот участок, у которого их
+	// больше: середина — это место, где нет никого.
+	best, bestS := P{}, 0.0
+	for p := range w.seg {
+		score := 0.0
+		for _, e := range w.foes {
+			if w.insideCastle(e.Pos) {
+				continue
+			}
+			wt := 1 / float64(max(w.wallDist(e.Pos), 1))
+			score += wt / float64(1+game.Chebyshev(p, e.Pos))
 		}
-		wt := 1 / float64(max(e.Pos.Y-game.WallRow, 1))
-		sum += wt * float64(e.Pos.X)
-		wsum += wt
+		if score > bestS {
+			best, bestS = p, score
+		}
 	}
-	if wsum == 0 {
-		if b.mem.front != 0 {
+	if bestS == 0 {
+		if b.mem.front != (P{}) {
 			return b.mem.front
 		}
-		return (game.GateColLeft + game.GateColRight) / 2
+		// Никого не видно — стоим у ворот: их ломают первыми.
+		if gates := w.b.GateTiles(); len(gates) > 0 {
+			return gates[0]
+		}
+		return w.segsByDist(w.b.ThroneTile())[0]
 	}
-	b.mem.front = clamp(int(sum/wsum+0.5), game.WallFirstCol, game.WallLastCol)
-	return b.mem.front
+	b.mem.front = best
+	return best
 }
 
 func (b *Bot) assignCastle(w *world, pl *castlePlan) {
-	mine := game.CastleMine()
+	mine := P{}
+	if ms := w.b.CastleMines(); len(ms) > 0 {
+		mine = ms[0]
+	}
 	alive := map[int]bool{}
 	for _, u := range w.own {
 		alive[u.ID] = true
@@ -156,7 +185,7 @@ func castleWorth(w *world, t *unit) float64 {
 	switch t.typ {
 	case game.UnitBomber:
 		v = 40
-		if t.Pos.Y <= game.WallRow+4 {
+		if w.wallDist(t.Pos) <= 4 {
 			v += 25
 		}
 	case game.UnitCatapult, game.UnitRam:
@@ -165,7 +194,7 @@ func castleWorth(w *world, t *unit) float64 {
 		v = 30
 	case game.UnitLadder:
 		v = 8
-		if t.Pos.Y == game.WallRow+1 {
+		if w.wallDist(t.Pos) <= 1 {
 			v += 20
 		}
 	case game.UnitKnight:
@@ -183,9 +212,9 @@ func castleWorth(w *world, t *unit) float64 {
 	}
 	v += 2 * float64(t.Stars)
 	switch {
-	case insideCastle(t.Pos) || tileAt(t.Pos) == game.TileWall:
+	case w.insideCastle(t.Pos) || w.tile(t.Pos) == game.TileWall:
 		v *= 2
-	case t.Pos.Y == game.WallRow+1:
+	case w.wallDist(t.Pos) <= 1:
 		v *= 1.3
 	}
 	return v
@@ -199,14 +228,10 @@ func (b *Bot) mendSeeds(w *world) []seed {
 		return nil
 	}
 	var out []seed
-	for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-		s := w.seg[col]
-		if s == nil {
-			continue
-		}
+	for p, s := range w.seg {
 		d := -1
 		switch {
-		case s.HP <= 0 && !game.IsCastleGate(col) && w.unitAt(P{X: col, Y: game.WallRow}) == nil:
+		case s.HP <= 0 && s.Kind != game.SegGate && w.unitAt(p) == nil:
 			d = 0
 		case s.HP > 0 && s.HP*10 <= s.MaxHP*7:
 			d = 2
@@ -214,10 +239,16 @@ func (b *Bot) mendSeeds(w *world) []seed {
 		if d < 0 {
 			continue
 		}
-		for dx := -1; dx <= 1; dx++ {
-			out = append(out, seed{P{X: col + dx, Y: game.WalkRow}, d})
+		if top, ok := w.walkBehind(p); ok {
+			out = append(out, seed{top, d})
+			for _, o := range dirs {
+				if n := top.Add(o[0], o[1]); w.tile(n) == game.TileWalk {
+					out = append(out, seed{n, d})
+				}
+			}
 		}
 	}
+	sortSeeds(out)
 	return out
 }
 
@@ -234,10 +265,10 @@ func (b *Bot) castleMove(w *world, pl *castlePlan, u *unit) []cand {
 		return nil
 	case roleMine:
 		key, per = "mine", 3
-		seeds = seeds0([]P{game.CastleMine()})
+		seeds = seeds0(w.b.CastleMines())
 	case roleGuard:
 		key, per = "guard", 2
-		seeds = kingRing(pl)
+		seeds = kingRing(w, pl)
 	case roleBuilder:
 		if len(pl.mend) == 0 {
 			return nil
@@ -248,9 +279,14 @@ func (b *Bot) castleMove(w *world, pl *castlePlan, u *unit) []cand {
 		seeds = woundedRing(w, u)
 	case roleShooter:
 		key, per = "post", 0.5
-		for x := game.WallFirstCol; x <= game.WallLastCol; x++ {
-			seeds = append(seeds, seed{P{X: x, Y: game.WalkRow}, abs(x-pl.front) / 2})
+		for p := range w.seg {
+			top, ok := w.walkBehind(p)
+			if !ok {
+				continue
+			}
+			seeds = append(seeds, seed{top, game.Chebyshev(p, pl.front) / 2})
 		}
+		sortSeeds(seeds)
 	default: // ближний бой
 		key, per, seeds = b.blockSeeds(w, pl)
 	}
@@ -263,13 +299,13 @@ func (b *Bot) castleMove(w *world, pl *castlePlan, u *unit) []cand {
 }
 
 // kingRing — клетки вокруг короля: там место храмовников.
-func kingRing(pl *castlePlan) []seed {
+func kingRing(w *world, pl *castlePlan) []seed {
 	if pl.king == nil {
 		return nil
 	}
 	var out []seed
 	for _, o := range dirs {
-		if p := pl.king.Pos.Add(o[0], o[1]); insideCastle(p) {
+		if p := pl.king.Pos.Add(o[0], o[1]); w.insideCastle(p) {
 			out = append(out, seed{p, 0})
 		}
 	}
@@ -318,16 +354,21 @@ func (b *Bot) blockSeeds(w *world, pl *castlePlan) (string, float64, []seed) {
 	var out []seed
 	for _, t := range pl.threats {
 		out = append(out, seed{t, 0})
-		if t.Y == game.WallRow {
-			out = append(out, seed{P{X: t.X, Y: game.WalkRow}, 1})
+		if top, ok := w.walkBehind(t); ok {
+			out = append(out, seed{top, 1})
 		}
 	}
 	if len(out) > 0 {
 		return "plug", 2, out
 	}
-	for x := game.WallFirstCol; x <= game.WallLastCol; x++ {
-		out = append(out, seed{P{X: x, Y: game.CourtRowLast}, abs(x - pl.front)})
+	// Тихо — ждём во дворе, ближе к тому участку, где давят.
+	for _, p := range w.b.InsideTiles() {
+		if w.tile(p) != game.TileCourtyard || w.wallDist(p) != 2 {
+			continue
+		}
+		out = append(out, seed{p, game.Chebyshev(p, pl.front)})
 	}
+	sortSeeds(out)
 	return "wait", 0.4, out
 }
 
@@ -451,7 +492,7 @@ func (b *Bot) refuge(w *world, pl *castlePlan, king *unit) P {
 				open++
 			}
 		}
-		away := abs(p.X - pl.front)
+		away := game.Chebyshev(p, pl.front)
 		if pl.safety != nil {
 			away = pl.safety.at(p)
 		}
@@ -459,7 +500,11 @@ func (b *Bot) refuge(w *world, pl *castlePlan, king *unit) P {
 		// Сторону двора замок выбирает сам, наудачу: всегда прятать короля в
 		// одном и том же углу — значит дарить гонку тому осаждающему, чей
 		// лагерь ближе к нему.
-		if (p.X > (game.WallFirstCol+game.WallLastCol)/2) == (b.mem.wing > 0) {
+		// Сторону считаем от середины замка, а не от середины карты: на
+		// «Теснине» замок прижат к краю, и мерка по всей карте делала бы
+		// «правую половину двора» пустым множеством.
+		c := w.b.ThroneTile()
+		if (p.X-c.X+p.Y-c.Y > 0) == (b.mem.wing > 0) {
 			v += 2
 		}
 		return v
@@ -497,8 +542,8 @@ func (b *Bot) castleWork(w *world, pl *castlePlan, u *unit) []cand {
 		}
 	}
 	for _, p := range u.FixAt {
-		if tileAt(p) == game.TileWall {
-			s := w.seg[p.X]
+		if w.tile(p) == game.TileWall {
+			s := w.seg[p]
 			if !b.prof.mend || s == nil || you.Fixes <= 0 || you.Supplies < game.EngineerWallCost+5 {
 				continue
 			}
@@ -542,61 +587,61 @@ func (b *Bot) pressure(w *world, p P, r int) float64 {
 func (b *Bot) castleSkills(w *world, pl *castlePlan) []cand {
 	var out []cand
 	you := w.v.You
-	ability := func(name string, col int, score float64) {
-		out = append(out, cand{a: game.Action{Kind: game.ActAbility, Ability: name, Col: col}, score: score, ap: 1})
+	// Сегмент адресуем клеткой: на кольце столбца мало.
+	ability := func(name string, at P, score float64) {
+		out = append(out, cand{a: game.Action{Kind: game.ActAbility, Ability: name, At: at}, score: score, ap: 1})
 	}
 	// Решётку держим опущенной: открытые ворота — проход для всех.
-	for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-		if s := w.seg[col]; s != nil && s.HP > 0 && s.Kind.IsGate() && s.Open && w.unitAt(P{X: col, Y: game.WallRow}) == nil {
-			ability("gate", col, 10)
+	for p, s := range w.seg {
+		if s.HP > 0 && s.Kind.IsGate() && s.Open && w.unitAt(p) == nil {
+			ability("gate", p, 10)
 		}
 	}
 	// Смола: льют под стену туда, где больше всего достанется — в первую
 	// очередь подрывнику и лестнице.
 	if b.prof.pitch && you.Pitches > 0 && you.Supplies >= game.PitchCost {
-		for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-			c := game.PitchTile(col)
+		for p := range w.seg {
+			c := w.b.OutsideOf(p)
 			sum := 0.0
 			for _, e := range w.foes {
-				if e.Pos.Y >= game.WallRow && game.Chebyshev(e.Pos, c) <= 1 {
+				if !w.insideCastle(e.Pos) && game.Chebyshev(e.Pos, c) <= 1 {
 					sum += pl.ev.unitValue(w, e, game.PitchDamage)
 				}
 			}
 			if sum >= 5 {
-				ability("pitch", col, sum-1)
+				ability("pitch", p, sum-1)
 			}
 		}
 	}
 	// Пролом: отстроить заново дорого, поэтому — когда враг рядом или
 	// заколотить его деревянными воротами нечем.
 	if b.prof.mend && you.Fixes > 0 && you.Supplies >= you.Rebuild {
-		for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-			s := w.seg[col]
-			if s == nil || s.HP > 0 || w.unitAt(P{X: col, Y: game.WallRow}) != nil {
+		for p, s := range w.seg {
+			if s.HP > 0 || w.unitAt(p) != nil {
 				continue
 			}
-			score := 9 + 12*b.pressure(w, P{X: col, Y: game.WallRow}, 6)
-			if !game.IsCastleGate(col) && b.engineerNear(w, col) {
+			score := 9 + 12*b.pressure(w, p, 6)
+			if s.Kind != game.SegGate && b.engineerNear(w, p) {
 				score -= 8 // инженер рядом заколотит вчетверо дешевле
 			}
-			ability("rebuild", col, score)
+			ability("rebuild", p, score)
 		}
 	}
 	if b.prof.militia && you.MilitiaOK {
 		switch {
 		case pl.alarm:
-			ability("militia", 0, 15)
+			ability("militia", P{}, 15)
 		case pl.safety != nil && pl.king != nil && pl.safety.at(pl.king.Pos) <= 6:
-			ability("militia", 0, 8)
+			ability("militia", P{}, 8)
 		}
 	}
 	return out
 }
 
 // engineerNear — успеет ли инженер к пролому в этом же или следующем ходу.
-func (b *Bot) engineerNear(w *world, col int) bool {
+func (b *Bot) engineerNear(w *world, at P) bool {
 	for _, u := range w.own {
-		if u.spec.Builder && game.Chebyshev(u.Pos, P{X: col, Y: game.WallRow}) <= u.spec.Move+1 {
+		if u.spec.Builder && game.Chebyshev(u.Pos, at) <= u.spec.Move+1 {
 			return true
 		}
 	}
@@ -614,8 +659,22 @@ func (b *Bot) castleWants(w *world, pl *castlePlan) []want {
 	}
 	day := w.v.Day
 	you := w.v.You
-	post := P{X: pl.front, Y: game.WalkRow}
-	yard := P{X: pl.front, Y: game.CourtRowLast}
+	post, yard := pl.front, w.b.ThroneTile()
+	if top, ok := w.walkBehind(pl.front); ok {
+		post = top
+	}
+	// Двор у фронта — клетка двора вплотную к посту: на шаг глубже боевого
+	// хода, не дальше. Оттуда подкрепление успевает на стену.
+	bestYard := -1
+	for _, o := range dirs {
+		p := post.Add(o[0], o[1])
+		if w.tile(p) != game.TileCourtyard {
+			continue
+		}
+		if d := w.wallDist(p); d > bestYard {
+			yard, bestYard = p, d
+		}
+	}
 	if pl.king != nil && pl.alarm {
 		// Враг внутри — новых бойцов к нему, а не к королю: вставший
 		// вплотную к королю гарнизон только замуровывает его на месте.
@@ -680,10 +739,10 @@ func (b *Bot) castleWants(w *world, pl *castlePlan) []want {
 		if engines {
 			prio = 8.5
 		}
-		out = append(out, want{t: game.UnitBallista, prio: prio, near: P{X: clamp(pl.front, 8, 19), Y: game.WalkRow}, walk: true})
+		out = append(out, want{t: game.UnitBallista, prio: prio, near: post, walk: true})
 	}
 	if b.prof.trebuchet && w.count(game.UnitTrebuchet) == 0 && day >= 6 {
-		out = append(out, want{t: game.UnitTrebuchet, prio: 5.5, near: P{X: clamp(pl.front, 7, 20), Y: game.CourtRowLast}})
+		out = append(out, want{t: game.UnitTrebuchet, prio: 5.5, near: yard})
 	}
 	if b.prof.healer && w.count(game.UnitHealer) == 0 && day >= 10 {
 		out = append(out, want{t: game.UnitHealer, prio: 4, near: yard})
@@ -697,11 +756,12 @@ func (b *Bot) castleReserve(w *world, pl *castlePlan) int {
 	if !b.prof.mend {
 		return 0
 	}
-	for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-		if s := w.seg[col]; s != nil && s.HP <= 0 {
-			if game.IsCastleGate(col) {
+	for p, s := range w.seg {
+		if s.HP <= 0 {
+			if s.Kind == game.SegGate {
 				return w.v.You.Rebuild
 			}
+			_ = p
 			return game.WoodGateCost
 		}
 	}

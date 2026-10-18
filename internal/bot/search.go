@@ -86,7 +86,7 @@ func (w *world) spread(g *grid[bool]) grid[bool] {
 				continue
 			}
 			for _, o := range dirs {
-				if p := (P{X: x + o[0], Y: y + o[1]}); p.InBounds() {
+				if p := (P{X: x + o[0], Y: y + o[1]}); w.in(p) {
 					if _, ok := w.enter(kingClass, p); ok {
 						out[p.Y][p.X] = true
 					}

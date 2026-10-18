@@ -16,8 +16,8 @@ package game
 func (s *State) VisibleFor(side Side) map[Point]bool {
 	vis := map[Point]bool{}
 	if side == SideNeutral {
-		for y := 0; y < Rows; y++ {
-			for x := 0; x < Cols; x++ {
+		for y := 0; y < s.b.Rows; y++ {
+			for x := 0; x < s.b.Cols; x++ {
 				vis[Point{x, y}] = true
 			}
 		}
@@ -39,13 +39,13 @@ func (s *State) VisibleFor(side Side) map[Point]bool {
 	}
 
 	// Свой тыл виден всегда: замок изнутри и оба лагеря осаждающих.
-	for y := 0; y < Rows; y++ {
-		for x := 0; x < Cols; x++ {
+	for y := 0; y < s.b.Rows; y++ {
+		for x := 0; x < s.b.Cols; x++ {
 			p := Point{x, y}
-			if side == SideDefender && p.Y <= WallRow {
+			if side == SideDefender && (s.b.IsInsideCastle(p) || s.b.TileAt(p) == TileWall) {
 				vis[p] = true
 			}
-			if side.IsAttacker() && CampSide(p) != SideNeutral {
+			if side.IsAttacker() && s.b.CampSide(p) != SideNeutral {
 				vis[p] = true
 			}
 		}
@@ -90,11 +90,11 @@ func (s *State) CanSee(side Side, p Point) bool {
 
 // fogRows кодирует видимость построчно: '1' — видно, '0' — туман.
 // Так маска занимает в снимке несколько сотен байт вместо списка точек.
-func fogRows(vis map[Point]bool) []string {
-	out := make([]string, 0, Rows)
-	for y := 0; y < Rows; y++ {
-		row := make([]byte, Cols)
-		for x := 0; x < Cols; x++ {
+func (s *State) fogRows(vis map[Point]bool) []string {
+	out := make([]string, 0, s.b.Rows)
+	for y := 0; y < s.b.Rows; y++ {
+		row := make([]byte, s.b.Cols)
+		for x := 0; x < s.b.Cols; x++ {
 			row[x] = '0'
 			if vis[Point{x, y}] {
 				row[x] = '1'

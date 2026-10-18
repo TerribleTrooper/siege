@@ -3,6 +3,7 @@ package bot
 import (
 	"container/heap"
 	"fmt"
+	"sort"
 
 	"siege/internal/game"
 )
@@ -26,51 +27,44 @@ type unit struct {
 	side game.Side
 }
 
-// grid — что-то по клетке поля. Карта маленькая, и сетка здесь быстрее
-// словаря: путь бот пересчитывает на каждом шаге.
-type grid[T any] [game.Rows][game.Cols]T
+// maxDim — сторона самой большой карты в игре. Сетка берётся с запасом под
+// неё: так она остаётся массивом (а он вчетверо быстрее словаря, и путь бот
+// пересчитывает на каждом шаге), но подходит обеим картам.
+const maxDim = 44
+
+// grid — что-то по клетке поля.
+type grid[T any] [maxDim][maxDim]T
 
 func (g *grid[T]) at(p P) (v T) {
-	if p.InBounds() {
+	if p.X >= 0 && p.X < maxDim && p.Y >= 0 && p.Y < maxDim {
 		v = g[p.Y][p.X]
 	}
 	return v
 }
 
-// tiles — рельеф: он не меняется всю партию, считаем его один раз.
-var tiles = func() (g grid[game.TileKind]) {
-	for y := 0; y < game.Rows; y++ {
-		for x := 0; x < game.Cols; x++ {
-			g[y][x] = game.TileAt(P{X: x, Y: y})
-		}
-	}
-	return g
-}()
+// in — внутри ли точка той карты, на которой идёт партия.
+func (w *world) in(p P) bool { return w.b.In(p) }
 
-func tileAt(p P) game.TileKind {
-	if !p.InBounds() {
-		return game.TileField
-	}
-	return tiles[p.Y][p.X]
-}
+func (w *world) tile(p P) game.TileKind { return w.b.TileAt(p) }
 
-func inBush(p P) bool { return tileAt(p) == game.TileBush }
+func (w *world) inBush(p P) bool { return w.tile(p) == game.TileBush }
 
-func insideCastle(p P) bool {
-	t := tileAt(p)
+func (w *world) insideCastle(p P) bool {
+	t := w.tile(p)
 	return t == game.TileWalk || t == game.TileCourtyard
 }
 
 type world struct {
 	v      *game.View
 	side   game.Side
-	own    []*unit // свои, кроме пассажиров осадной башни
-	foes   []*unit // видимые враги
-	allies []*unit // второй осаждающий: союзник по правилам
+	own    []*unit     // свои, кроме пассажиров осадной башни
+	foes   []*unit     // видимые враги
+	allies []*unit     // второй осаждающий: союзник по правилам
+	b      *game.Board // карта партии: их две, и рельеф у них разный
 	units  grid[*unit]
 	blds   grid[*game.BuildingView]
 	water  grid[bool] // открытая вода во рву
-	seg    [game.Cols]*game.WallSegment
+	seg    map[P]*game.WallSegment
 	buy    map[string]*game.BuyView
 	fields map[string]*field
 	costs  map[mclass]*grid[int] // во что обходится вход в клетку, -1 — нельзя
@@ -81,8 +75,9 @@ type world struct {
 
 func newWorld(v *game.View) *world {
 	w := &world{
-		v: v, side: game.SideByName(v.You.Side),
-		buy: map[string]*game.BuyView{}, fields: map[string]*field{}, costs: map[mclass]*grid[int]{},
+		v: v, side: game.SideByName(v.You.Side), b: game.BoardByKey(v.Map),
+		buy: map[string]*game.BuyView{}, fields: map[string]*field{},
+		costs: map[mclass]*grid[int]{}, seg: map[P]*game.WallSegment{},
 	}
 	for i := range v.Units {
 		uv := &v.Units[i]
@@ -106,12 +101,11 @@ func newWorld(v *game.View) *world {
 		w.blds[b.Pos.Y][b.Pos.X] = b
 	}
 	for i := range v.Wall {
-		if s := &v.Wall[i]; s.Col >= 0 && s.Col < game.Cols {
-			w.seg[s.Col] = s
-		}
+		s := &v.Wall[i]
+		w.seg[s.Pos] = s
 	}
 	for _, p := range v.Moat {
-		if p.InBounds() {
+		if w.in(p) {
 			w.water[p.Y][p.X] = true
 		}
 	}
@@ -145,7 +139,7 @@ func (w *world) bldAt(p P) *game.BuildingView { return w.blds.at(p) }
 func (w *world) wet(p P) bool                 { return w.water.at(p) }
 
 func (w *world) visible(p P) bool {
-	if !p.InBounds() || p.Y >= len(w.v.Fog) {
+	if !w.in(p) || p.Y >= len(w.v.Fog) {
 		return false
 	}
 	row := w.v.Fog[p.Y]
@@ -158,23 +152,7 @@ func (w *world) inTower(p P) bool {
 }
 
 // intact — стоит ли сегмент в этом столбце.
-func (w *world) intact(col int) bool {
-	if col < 0 || col >= game.Cols {
-		return false
-	}
-	s := w.seg[col]
-	return s != nil && s.HP > 0
-}
-
 // opening — проходим ли сегмент: пролом или поднятая решётка.
-func (w *world) opening(col int) bool {
-	if col < 0 || col >= game.Cols {
-		return false
-	}
-	s := w.seg[col]
-	return s != nil && (s.HP <= 0 || (s.Kind.IsGate() && s.Open))
-}
-
 // count — сколько своих отрядов этого вида. Пассажиры башни в снимке на
 // карте не стоят, но в армии они есть — их считаем по её экипажу.
 func (w *world) count(t game.UnitType) int {
@@ -238,7 +216,7 @@ func (w *world) cover(dmg int, to P, sp game.UnitSpec, dist int) int {
 	switch {
 	case w.inTower(to):
 		cut = game.TowerCoverCut
-	case inBush(to):
+	case w.inBush(to):
 		cut = game.BushCoverCut
 	default:
 		return dmg
@@ -289,10 +267,10 @@ func (w *world) canStrike(e *unit, p P) bool {
 	r := reachOf(e) + e.Area
 	mv := e.spec.Move
 	dx, dy := abs(p.X-e.Pos.X), abs(p.Y-e.Pos.Y)
-	if insideCastle(e.Pos) && !insideCastle(p) {
+	if w.insideCastle(e.Pos) && !w.insideCastle(p) {
 		return dx <= mv+r && dy <= r
 	}
-	if e.spec.Bound && !insideCastle(p) {
+	if e.spec.Bound && !w.insideCastle(p) {
 		return false
 	}
 	return max(dx, dy) <= mv+r
@@ -340,7 +318,7 @@ func (w *world) watched(p P) bool {
 	switch {
 	case w.side.IsAttacker() && p.Y <= game.WallRow:
 		return true // замок видит себя целиком
-	case w.side == game.SideDefender && game.CampSide(p) != game.SideNeutral:
+	case w.side == game.SideDefender && w.b.CampSide(p) != game.SideNeutral:
 		return true // а осаждающие — свои лагеря
 	}
 	for _, e := range w.foes {
@@ -381,7 +359,7 @@ var footClass = mclass{}
 // не считая стоящих на ней отрядов. Считается один раз на шаг для каждого
 // вида хода.
 func (w *world) enter(mc mclass, p P) (int, bool) {
-	if !p.InBounds() {
+	if !w.in(p) {
 		return 0, false
 	}
 	g := w.costs[mc]
@@ -395,8 +373,16 @@ func (w *world) enter(mc mclass, p P) (int, bool) {
 
 func (w *world) costGrid(mc mclass) *grid[int] {
 	g := &grid[int]{}
-	for y := 0; y < game.Rows; y++ {
-		for x := 0; x < game.Cols; x++ {
+	// Клетки за краем карты партии закрыты наглухо: сетка берётся с запасом
+	// под самую большую карту, и незаполненный хвост иначе читался бы как
+	// «пройти даром».
+	for y := 0; y < maxDim; y++ {
+		for x := 0; x < maxDim; x++ {
+			g[y][x] = -1
+		}
+	}
+	for y := 0; y < w.b.Rows; y++ {
+		for x := 0; x < w.b.Cols; x++ {
 			g[y][x] = w.enterCost(mc, P{X: x, Y: y})
 		}
 	}
@@ -404,14 +390,14 @@ func (w *world) costGrid(mc mclass) *grid[int] {
 }
 
 func (w *world) enterCost(mc mclass, p P) int {
-	if mc.bound && !insideCastle(p) {
+	if mc.bound && !w.insideCastle(p) {
 		return -1
 	}
-	switch tileAt(p) {
+	switch w.tile(p) {
 	case game.TileCliff, game.TileRavine:
 		return -1
 	case game.TileWall:
-		if !w.opening(p.X) {
+		if !w.openingAt(p) {
 			return -1
 		}
 	}
@@ -432,17 +418,18 @@ func (w *world) enterCost(mc mclass, p P) int {
 	if w.wet(p) {
 		return -1
 	}
-	if inBush(p) {
+	if w.inBush(p) {
 		return game.BushMoveCost
 	}
 	return 1
 }
 
-// field — сколько стоит дойти из клетки до ближайшей цели.
-type field [game.Rows][game.Cols]int
+// field — сколько стоит дойти из клетки до ближайшей цели. Размер берётся с
+// запасом под самую большую карту, как и у grid.
+type field [maxDim][maxDim]int
 
 func (f *field) at(p P) int {
-	if !p.InBounds() {
+	if p.X < 0 || p.X >= maxDim || p.Y < 0 || p.Y >= maxDim {
 		return inf
 	}
 	return f[p.Y][p.X]
@@ -503,7 +490,7 @@ func (w *world) flow(key string, mc mclass, seeds []seed, extra func(P) int) *fi
 	}
 	h := &nodes{}
 	for _, s := range seeds {
-		if !s.p.InBounds() {
+		if !w.in(s.p) {
 			continue
 		}
 		if _, ok := w.enter(mc, s.p); !ok {
@@ -554,12 +541,15 @@ func (w *world) flow(key string, mc mclass, seeds []seed, extra func(P) int) *fi
 
 // around — клетки вокруг точки на расстоянии от lo до hi, которые есть на
 // карте.
-func around(c P, lo, hi int) []P {
+// around — клетки вокруг точки, кольцом от lo до hi. Границы — границы той
+// карты, на которой идёт партия: «Теснина» и «Разделённый замок» разного
+// размера, и общей мерки у них нет.
+func (w *world) around(c P, lo, hi int) []P {
 	var out []P
 	for dy := -hi; dy <= hi; dy++ {
 		for dx := -hi; dx <= hi; dx++ {
 			p := c.Add(dx, dy)
-			if d := max(abs(dx), abs(dy)); d >= lo && p.InBounds() {
+			if d := max(abs(dx), abs(dy)); d >= lo && w.in(p) {
 				out = append(out, p)
 			}
 		}
@@ -642,7 +632,7 @@ func moveCand(u *unit, to P, score float64) []cand {
 type judge struct {
 	worth func(w *world, t *unit) float64
 	// wall — во что ценится урон по сегменту стены (только у осады).
-	wall func(w *world, col, dmg int) float64
+	wall func(w *world, at P, dmg int) float64
 }
 
 // unitValue — чего стоит нанести цели dmg урона. Добитый отряд стоит
@@ -706,14 +696,14 @@ func (ev *judge) direct(w *world, u *unit, from, p P) float64 {
 		}
 		return ev.unitValue(w, victim, w.cover(dmg, victim.Pos, u.spec, dist))
 	}
-	if tileAt(p) == game.TileWall {
-		if ev.wall == nil || u.spec.VsWall <= 0 || !w.intact(p.X) {
+	if w.tile(p) == game.TileWall {
+		if ev.wall == nil || u.spec.VsWall <= 0 || !w.intactAt(p) {
 			return 0
 		}
-		if u.spec.GateOnly && !w.seg[p.X].Kind.IsGate() {
+		if seg := w.seg[p]; u.spec.GateOnly && (seg == nil || !seg.Kind.IsGate()) {
 			return 0
 		}
-		return ev.wall(w, p.X, w.siege(u))
+		return ev.wall(w, p, w.siege(u))
 	}
 	if b := w.bldAt(p); b != nil && w.targetBuilding(b) && !u.spec.GateOnly {
 		return buildingValue(b, w.siege(u))
@@ -730,7 +720,7 @@ func (ev *judge) area(w *world, u *unit, c P) float64 {
 	for dy := -u.Area; dy <= u.Area; dy++ {
 		for dx := -u.Area; dx <= u.Area; dx++ {
 			q := c.Add(dx, dy)
-			if !q.InBounds() {
+			if !w.in(q) {
 				continue
 			}
 			dmg, hard := power, sieged
@@ -752,9 +742,9 @@ func (ev *judge) area(w *world, u *unit, c P) float64 {
 				}
 				continue
 			}
-			if tileAt(q) == game.TileWall {
-				if ev.wall != nil && u.spec.VsWall > 0 && w.intact(q.X) {
-					sum += ev.wall(w, q.X, hard)
+			if w.tile(q) == game.TileWall {
+				if ev.wall != nil && u.spec.VsWall > 0 && w.intactAt(q) {
+					sum += ev.wall(w, q, hard)
 				}
 				continue
 			}
@@ -769,7 +759,7 @@ func (ev *judge) area(w *world, u *unit, c P) float64 {
 // bestArea — лучшая клетка для навесного удара в пределах дальности.
 func (ev *judge) bestArea(w *world, u *unit) (P, float64) {
 	best, bestV := P{}, 0.0
-	for _, c := range around(u.Pos, 1, reachOf(u)) {
+	for _, c := range w.around(u.Pos, 1, reachOf(u)) {
 		if v := ev.area(w, u, c); v > bestV {
 			best, bestV = c, v
 		}
@@ -843,4 +833,89 @@ func (ev *judge) bestStrike(w *world, u *unit) float64 {
 		}
 	}
 	return best
+}
+
+// segAt — сегмент кладки на клетке.
+func (w *world) segAt(p P) *game.WallSegment { return w.seg[p] }
+
+// --- кладка: на «Теснине» она ряд, на второй карте кольцо ---
+
+// wallDist — сколько шагов до ближайшего участка кладки.
+func (w *world) wallDist(p P) int { return w.b.WallDistance(p) }
+
+// openingAt — дыра ли это в обороне: пролом или открытые ворота.
+func (w *world) openingAt(p P) bool {
+	s := w.seg[p]
+	return s != nil && (s.HP <= 0 || (s.Kind.IsGate() && s.Open))
+}
+
+// intactAt — цел ли сегмент на этой клетке.
+func (w *world) intactAt(p P) bool {
+	s := w.seg[p]
+	return s != nil && s.HP > 0
+}
+
+// walkBehind — куда выводит подъём на стену в этом месте.
+func (w *world) walkBehind(wall P) (P, bool) { return w.b.WalkBehind(wall) }
+
+// segsByDist — участки кладки по удалению от выбранного места. Так «соседний
+// столбец» превращается в «соседний сегмент», и на кольце это работает так
+// же, как на прямой стене.
+func (w *world) segsByDist(aim P) []P {
+	out := make([]P, 0, len(w.seg))
+	for p := range w.seg {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		di, dj := game.Chebyshev(out[i], aim), game.Chebyshev(out[j], aim)
+		if di != dj {
+			return di < dj
+		}
+		if out[i].Y != out[j].Y {
+			return out[i].Y < out[j].Y
+		}
+		return out[i].X < out[j].X
+	})
+	return out
+}
+
+// ladderTop — куда выводит лестница, стоящая на этой клетке: боевой ход за
+// тем сегментом, к которому она приставлена. Снаружи, а не изнутри: изнутри
+// приставлять её незачем.
+func (w *world) ladderTop(p P) (P, bool) {
+	if w.insideCastle(p) {
+		return P{}, false
+	}
+	for _, d := range [4][2]int{{0, -1}, {0, 1}, {-1, 0}, {1, 0}} {
+		n := p.Add(d[0], d[1])
+		if w.seg[n] == nil {
+			continue
+		}
+		if top, ok := w.walkBehind(n); ok {
+			return top, true
+		}
+	}
+	return P{}, false
+}
+
+// sortPts — устойчивый порядок точек: бот должен ходить одинаково при
+// одинаковом снимке, а обход map порядка не даёт.
+func sortPts(ps []P) {
+	sort.Slice(ps, func(i, j int) bool {
+		if ps[i].Y != ps[j].Y {
+			return ps[i].Y < ps[j].Y
+		}
+		return ps[i].X < ps[j].X
+	})
+}
+
+// sortSeeds — устойчивый порядок точек старта: обход map его не даёт, а бот
+// при одинаковом снимке обязан ходить одинаково.
+func sortSeeds(ss []seed) {
+	sort.SliceStable(ss, func(i, j int) bool {
+		if ss[i].p.Y != ss[j].p.Y {
+			return ss[i].p.Y < ss[j].p.Y
+		}
+		return ss[i].p.X < ss[j].p.X
+	})
 }

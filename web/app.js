@@ -173,7 +173,7 @@ async function createHotseat() {
   // Боту имя не обязательно: сервер даст ему имя одного из домов лора.
   const names = ['hs1', 'hs2', 'hs3'].map((id, i) => $(id).value.trim() || (bots[i] ? '' : `Игрок ${i + 1}`));
   try {
-    const r = await api('/api/rooms', { mode: 'hotseat', names, bots });
+    const r = await api('/api/rooms', { mode: 'hotseat', names, bots, map: $('hs-map').value });
     saveSession({ room: r.room, token: r.token });
     connect();
   } catch (e) { homeError(e.message); }
@@ -187,7 +187,9 @@ async function createSolo() {
   saveLevel(level);
   const name = $('solo-name').value.trim() || 'Игрок';
   try {
-    const r = await api('/api/rooms', { mode: 'hotseat', names: ['', name, ''], bots: [level, '', level] });
+    const r = await api('/api/rooms', {
+      mode: 'hotseat', names: ['', name, ''], bots: [level, '', level], map: $('solo-map').value,
+    });
     saveSession({ room: r.room, token: r.token });
     connect();
   } catch (e) { homeError(e.message); }
@@ -213,9 +215,25 @@ async function joinOnline() {
 
 // --- приём состояния ---
 
+// useBoard — подмешать в мету геометрию той карты, на которой идёт партия.
+// Карт две, и всё остальное в клиенте — отрисовка, подсветки, карточка
+// клетки — по-прежнему читает поля меты, не зная, что их стало по набору на
+// карту.
+function useBoard(snap) {
+  const raw = app.rawMeta || app.meta;
+  if (!raw || !raw.boards) return;
+  app.rawMeta = raw;
+  const key = (snap.game && snap.game.map) || snap.map || 'classic';
+  if (app.boardKey === key) return;
+  const board = raw.boards[key] || raw.boards.classic;
+  app.boardKey = key;
+  app.meta = Object.assign({}, raw, board);
+}
+
 function onSnapshot(snap) {
   app.snap = snap;
   app.clockSkew = snap.nowMs - Date.now();
+  useBoard(snap);
 
   if (!snap.game) {
     show('screen-lobby');
@@ -422,6 +440,36 @@ async function botOp(body) {
   } catch (e) {
     if (app.snap && app.snap.game) toast(e.message); else homeError(e.message);
   }
+}
+
+// Карты. Их две, и выбирают её при создании партии: сменить карту посреди
+// осады нельзя — это другая партия.
+const MAP_HINTS = {
+  classic: 'Замок поперёк теснины, лагеря внизу, ров вдоль стены. 28×22.',
+  split: 'Замок посреди поля, осаждающие в противоположных углах, река сквозь двор, ' +
+    'форпост у истока. Втрое больше: 44×44, кольцо стены в 68 сегментов, четверо ворот.',
+};
+
+function fillMaps(select, value) {
+  const boards = (app.rawMeta && app.rawMeta.boards) || {};
+  select.innerHTML = '';
+  for (const key of ['classic', 'split']) {
+    if (boards[key]) select.add(new Option(boards[key].name, key));
+  }
+  select.value = boards[value] ? value : 'classic';
+}
+
+function showMapHint(select, hintId) {
+  const el = $(hintId);
+  if (el) el.textContent = MAP_HINTS[select.value] || '';
+}
+
+function savedMap() {
+  try { return localStorage.getItem('siege.map') || 'classic'; } catch { return 'classic'; }
+}
+
+function saveMap(key) {
+  try { localStorage.setItem('siege.map', key); } catch { /* приватный режим */ }
 }
 
 // showLevelHint — что ждать от выбранного уровня: под выбором на главном.
@@ -971,19 +1019,15 @@ function priceChips(cost) {
 function abilityTiles(key) {
   if (key === 'pitch') return app.meta.pitchTiles || [];
   const wall = (app.snap && app.snap.game && app.snap.game.wall) || [];
-  const row = app.meta.wallRow;
   if (key === 'gate') {
     // Деревянные ворота инженеров — такие же створки с решёткой, поэтому
     // список берём из снимка, а не из неизменной геометрии карты.
     return wall
       .filter((seg) => (seg.kind === 'gate' || seg.kind === 'woodgate') && seg.hp > 0)
-      .map((seg) => ({ x: seg.col, y: row }));
+      .map((seg) => seg.pos);
   }
-  if (key === 'rebuild') return wall.filter((seg) => seg.hp <= 0).map((seg) => ({ x: seg.col, y: row }));
-  const [from, to] = app.meta.wallCols;
-  const out = [];
-  for (let x = from; x <= to; x++) out.push({ x, y: row });
-  return out;
+  if (key === 'rebuild') return wall.filter((seg) => seg.hp <= 0).map((seg) => seg.pos);
+  return wall.map((seg) => seg.pos);
 }
 
 // --- карточка: выбранный отряд или осмотренная клетка ---
@@ -1417,7 +1461,7 @@ function cellInfo(g, cell) {
   const terrain = meta.terrain || {};
   const at = (p) => Boolean(p) && p.x === cell.x && p.y === cell.y;
   const ch = meta.tiles[cell.y][cell.x];
-  const seg = cell.y === meta.wallRow ? (g.wall || []).find((s) => s.col === cell.x) : null;
+  const seg = (g.wall || []).find((s) => s.pos && s.pos.x === cell.x && s.pos.y === cell.y);
   // Сегмент стены меняет вид по ходу партии: пролом и заколоченный пролом
   // описаны отдельно от того, что стояло здесь в начале осады.
   let key = ch;
@@ -1974,7 +2018,7 @@ function onCanvasClick(ev) {
     // со стеной, а не на ней, но столбец тот же самый.
     const ok = (app.ui.segments || []).some((p) => p.x === cell.x && p.y === cell.y);
     if (!ok) { toast(app.ui.ability === 'pitch' ? 'Выберите клетку под стеной' : 'Выберите сегмент стены'); return; }
-    act({ kind: 'ability', ability: app.ui.ability, col: cell.x });
+    act({ kind: 'ability', ability: app.ui.ability, at: cell });
     return;
   }
   if (app.ui.mode === 'build') {
@@ -2195,7 +2239,9 @@ async function boot() {
     $(id).oninput = (e) => app.music.setVolume(Number(e.target.value) / 100);
   }
   paintMusic();
-  app.meta = await api('/api/meta');
+  app.rawMeta = await api('/api/meta');
+  app.meta = Object.assign({}, app.rawMeta, app.rawMeta.boards.classic);
+  app.boardKey = 'classic';
 
   app.voice = createVoice({
     iceServers: app.meta.iceServers || [],
@@ -2237,6 +2283,13 @@ async function boot() {
   fillLevels($('solo-level'), { value: savedLevel() });
   $('solo-level').onchange = () => { saveLevel($('solo-level').value); showLevelHint(); };
   showLevelHint();
+  for (const [id, hint] of [['hs-map', 'hs-map-hint'], ['solo-map', 'solo-map-hint']]) {
+    const sel = $(id);
+    if (!sel) continue;
+    fillMaps(sel, savedMap());
+    sel.onchange = () => { saveMap(sel.value); showMapHint(sel, hint); };
+    showMapHint(sel, hint);
+  }
   fillLevels($('lobby-bot-level'), { value: savedLevel() });
   $('btn-add-bot').onclick = () => {
     saveLevel($('lobby-bot-level').value);

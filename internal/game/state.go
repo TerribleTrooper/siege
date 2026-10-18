@@ -84,13 +84,13 @@ func (u *Unit) revealAll() {
 
 // concealed — прячется ли отряд в кустах от этой стороны.
 func (s *State) concealed(u *Unit, from Side) bool {
-	return InBush(u.Pos) && !u.spotted[from] && areEnemies(u.Owner, from)
+	return s.b.InBush(u.Pos) && !u.spotted[from] && areEnemies(u.Owner, from)
 }
 
 // Lurking — сидит ли отряд в засаде хоть от кого-нибудь из врагов. Нужно
 // владельцу: по этому признаку клиент показывает, что отряд ещё не раскрыт.
 func (s *State) Lurking(u *Unit) bool {
-	if !InBush(u.Pos) {
+	if !s.b.InBush(u.Pos) {
 		return false
 	}
 	for _, side := range []Side{SideDefender, SideAttackerA, SideAttackerB} {
@@ -120,7 +120,7 @@ func (s *State) refreshCover() {
 		vis[side] = s.VisibleFor(side)
 	}
 	for _, u := range s.Units {
-		if !InBush(u.Pos) || u.Carrier != 0 {
+		if !s.b.InBush(u.Pos) || u.Carrier != 0 {
 			continue
 		}
 		for _, side := range []Side{SideDefender, SideAttackerA, SideAttackerB} {
@@ -195,6 +195,11 @@ type Result struct {
 // State — полное состояние партии. Вся логика правил живёт здесь и не знает
 // ничего про HTTP, комнаты и сеть.
 type State struct {
+	// b — карта, на которой идёт осада. Задаётся при создании партии и
+	// дальше не меняется; вся геометрия спрашивается у неё, а не у
+	// констант, потому что карт две.
+	b *Board
+
 	Phase Phase   `json:"phase"`
 	Day   int     `json:"day"`
 	Turn  Side    `json:"-"`
@@ -244,7 +249,7 @@ type State struct {
 // обычная постройка с прочностью, и когда его разбивают, вода возвращается
 // сама собой: отдельного флага у рва нет.
 func (s *State) moatOpen(p Point) bool {
-	if TileAt(p) != TileMoat {
+	if !s.b.IsWater(p) {
 		return false
 	}
 	b := s.buildingAt(p)
@@ -269,7 +274,7 @@ func (s *State) fillMoatAt(p Point, owner Side) bool {
 // виду у всех, скрывать в нём нечего.
 func (s *State) MoatOpenTiles() []Point {
 	var out []Point
-	for _, p := range MoatTiles() {
+	for _, p := range s.b.WaterTiles() {
 		if s.moatOpen(p) {
 			out = append(out, p)
 		}
@@ -280,7 +285,7 @@ func (s *State) MoatOpenTiles() []Point {
 // moveCost — во сколько обходится вход в клетку. Открытой воды среди таких
 // клеток нет: в ров не входит никто, см. tilePassable.
 func (s *State) moveCost(p Point) int {
-	return MoveCost(p)
+	return s.b.MoveCost(p)
 }
 
 // --- припасы и потолок обоза ---
@@ -357,10 +362,25 @@ func (s *State) addSupplies(side Side, n int) {
 // Случайности в партии нет вовсе: карта, рельеф и стартовые постройки
 // одинаковы каждый раз. Вышки на поле больше не разбрасываются — их ставят
 // сами игроки, и зерно для этого не нужно.
-func New(names [3]string) *State {
-	s := &State{Seats: [3]Seat{{Name: names[0]}, {Name: names[1]}, {Name: names[2]}}}
+func New(names [3]string) *State { return NewOn(Classic, names) }
+
+// NewOn — осада на выбранной карте.
+func NewOn(b *Board, names [3]string) *State {
+	if b == nil {
+		b = Classic
+	}
+	s := &State{b: b, Seats: [3]Seat{{Name: names[0]}, {Name: names[1]}, {Name: names[2]}}}
 	s.setup()
 	return s
+}
+
+// Board — карта этой партии. Снимку и виду она нужна, чтобы не гадать по
+// размеру поля.
+func (s *State) Board() *Board {
+	if s.b == nil {
+		s.b = Classic
+	}
+	return s.b
 }
 
 // seatSides — роль каждого места. Роли закреплены за местами на всю партию:
@@ -393,7 +413,7 @@ func (s *State) Silver(side Side) int { return s.silver[side] }
 // MineHeldBy — сколько клеток рудника удерживает сторона.
 func (s *State) MineHeldBy(side Side) int {
 	held := 0
-	for _, p := range MineTiles() {
+	for _, p := range s.b.MineTiles() {
 		if u := s.unitAt(p); u != nil && u.Owner == side {
 			held++
 		}
@@ -404,7 +424,7 @@ func (s *State) MineHeldBy(side Side) int {
 // MineOwners — кто стоит на клетках рудника. Видно всем: рудник на виду.
 func (s *State) MineOwners() map[Point]Side {
 	out := map[Point]Side{}
-	for _, p := range MineTiles() {
+	for _, p := range s.b.MineTiles() {
 		if u := s.unitAt(p); u != nil {
 			out[p] = u.Owner
 		}
@@ -418,10 +438,10 @@ func (s *State) setup() {
 	s.Phase = PhasePlay
 	s.Day = 1
 	s.Turn = SideDefender
-	s.Wall = newWall()
+	s.Wall = s.b.newWall()
 	s.nextUnitID = 1
 	s.nextBuildingID = 1
-	s.Buildings = startingBuildings(func() int {
+	s.Buildings = s.b.startingBuildings(func() int {
 		id := s.nextBuildingID
 		s.nextBuildingID++
 		return id
@@ -434,23 +454,26 @@ func (s *State) setup() {
 
 	// Король — приз осады. Он не нанимается и не воскресает: убили — партия
 	// кончилась. Начинает в середине двора, дальше замок водит его сам.
-	king := s.spawn(SideDefender, UnitKing, ThroneTile())
+	king := s.spawn(SideDefender, UnitKing, s.b.ThroneTile())
 
 	// И при нём стража: двое храмовников по бокам. Они не нанимаются и не
 	// покупаются — появляются вместе с королём и за стену не выходят.
 	// Оставлять приз вовсе без охраны нельзя: иначе осада достаётся первому
 	// же отряду, добежавшему до пролома.
 	for _, dx := range []int{-1, 1} {
-		if p := king.Pos.Add(dx, 0); p.InBounds() && TileAt(p) == TileCourtyard && s.unitAt(p) == nil {
+		if p := king.Pos.Add(dx, 0); s.b.In(p) && s.b.TileAt(p) == TileCourtyard && s.unitAt(p) == nil {
 			s.spawn(SideDefender, UnitTemplar, p)
 		}
 	}
 
 	// Защитнику дают стартовый гарнизон, чтобы первый день не был пустым.
-	s.spawn(SideDefender, UnitGarrison, Point{GateColLeft, WalkRow})
-	s.spawn(SideDefender, UnitEngineer, Point{GateColRight, WalkRow})
-	s.spawn(SideDefender, UnitScout, Point{WallFirstCol + 3, WalkRow})
-	s.spawn(SideDefender, UnitScout, Point{WallLastCol - 3, WalkRow})
+	// Куда он встаёт, знает карта: на кольце стены «у ворот» — это четыре
+	// разных места, а не четыре столбца одного ряда.
+	for i, kind := range []UnitType{UnitGarrison, UnitEngineer, UnitScout, UnitScout} {
+		if i < len(s.b.garrison) {
+			s.spawn(SideDefender, kind, s.b.garrison[i])
+		}
+	}
 }
 
 // Rallied — действует ли сейчас воодушевление этой стороны. Привязано к
@@ -549,7 +572,7 @@ func (s *State) unitVision(u *Unit) int {
 func (s *State) spawn(side Side, t UnitType, at Point) *Unit {
 	u := &Unit{ID: s.nextUnitID, Owner: side, Type: t, HP: Spec(t).MaxHP, Pos: at, Charges: Spec(t).Charges}
 	// Отряд, появившийся на открытом месте, прятать не от кого.
-	if !InBush(at) {
+	if !s.b.InBush(at) {
 		u.revealAll()
 	}
 	s.nextUnitID++
@@ -653,7 +676,7 @@ func (s *State) notePitch(side Side) {
 // FarmsHeldBy — сколько пашен занято отрядами этой стороны.
 func (s *State) FarmsHeldBy(side Side) int {
 	held := 0
-	for _, p := range FarmTiles() {
+	for _, p := range s.b.FarmTiles() {
 		if u := s.unitAt(p); u != nil && u.Owner == side {
 			held++
 		}
@@ -700,11 +723,28 @@ func (s *State) unitByID(id int) *Unit {
 	return nil
 }
 
-func (s *State) segment(col int) *WallSegment {
-	if col < WallFirstCol || col > WallLastCol {
+// segment — сегмент кладки на этой клетке, nil если кладки там нет.
+func (s *State) segment(p Point) *WallSegment {
+	i := s.b.SegmentIndex(p)
+	if i < 0 || i >= len(s.Wall) {
 		return nil
 	}
-	return &s.Wall[segmentIndex(col)]
+	return &s.Wall[i]
+}
+
+// segmentCol — сегмент по столбцу. Нужен только классической карте: её
+// протокол адресует кладку столбцом, и старые клиенты так и делают.
+func (s *State) segmentCol(col int) *WallSegment {
+	return s.segment(Point{col, WallRow})
+}
+
+// pitchTile — куда выльется смола из этого сегмента.
+func (s *State) pitchTile(seg *WallSegment) Point {
+	i := s.b.SegmentIndex(seg.Pos)
+	if i < 0 || i >= len(s.b.pitch) {
+		return seg.Pos
+	}
+	return s.b.pitch[i]
 }
 
 func (s *State) removeUnit(u *Unit) {

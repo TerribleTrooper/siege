@@ -33,7 +33,7 @@ const (
 
 // siegePlan — замысел осаждающего на этот шаг.
 type siegePlan struct {
-	col      int     // столбец стены, который ломаем
+	aim      P       // участок кладки, который ломаем
 	king     P       // где король: виден сейчас или середина круга поиска
 	kingUnit *unit   // сам король, если виден
 	search   []P     // где король может быть, пока его не видно
@@ -82,37 +82,44 @@ func (b *Bot) siegePlan(w *world) *siegePlan {
 		pl.king = middle(pl.search)
 	}
 
-	for col := game.WallFirstCol; col <= game.WallLastCol; col++ {
-		if w.opening(col) {
-			pl.entries = append(pl.entries, P{X: col, Y: game.WallRow})
+	for p := range w.seg {
+		if w.openingAt(p) {
+			pl.entries = append(pl.entries, p)
 		}
 	}
+	sortPts(pl.entries)
 	for _, u := range append(append([]*unit{}, w.own...), w.allies...) {
-		if u.typ == game.UnitLadder && u.Pos.Y == game.WallRow+1 && w.unitAt(P{X: u.Pos.X, Y: game.WalkRow}) == nil {
+		if u.typ != game.UnitLadder {
+			continue
+		}
+		// Лестница считается приставленной, если она стоит снаружи вплотную
+		// к кладке, а боевой ход за этим сегментом свободен.
+		if top, ok := w.ladderTop(u.Pos); ok && w.unitAt(top) == nil {
 			pl.ladders = append(pl.ladders, u)
 		}
 	}
 	for _, u := range w.own {
-		if insideCastle(u.Pos) || tileAt(u.Pos) == game.TileWall {
+		if w.insideCastle(u.Pos) || w.tile(u.Pos) == game.TileWall {
 			pl.inside++
 		}
 	}
 	pl.assault = len(pl.entries) > 0 || len(pl.ladders) > 0 || pl.inside > 0
 
-	pl.col = b.pickCol(w, pl.king)
-	b.mem.col = pl.col
-	pl.stage = P{X: pl.col, Y: game.WallRow + 4}
+	pl.aim = b.pickAim(w, pl.king)
+	b.mem.aim = pl.aim
+	pl.stage = w.b.StageTile(pl.aim, 4)
 	pl.ev = &judge{worth: siegeWorth(pl), wall: wallWorth(pl)}
 
 	// Пашня и рудник: свой фланг и тот рудник, который не занят союзником.
-	farms := game.FarmTiles()
+	farms := w.b.FarmTiles()
 	pl.farm = farms[0]
 	if w.side == game.SideAttackerB {
 		pl.farm = farms[1]
 	}
 	pl.farmFree = w.free(pl.farm)
 	pl.mineFree = false
-	for _, m := range []P{game.MineTiles()[1], game.MineTiles()[0]} { // южный безопаснее
+	mines := w.b.MineTiles()
+	for _, m := range []P{mines[1], mines[0]} { // дальний от замка безопаснее
 		if u := w.unitAt(m); u != nil && u.Mine {
 			pl.mine, pl.mineFree = m, true
 			break
@@ -127,8 +134,8 @@ func (b *Bot) siegePlan(w *world) *siegePlan {
 		if pl.roles[u.ID] != roleAssault {
 			continue
 		}
-		if insideCastle(u.Pos) || game.Chebyshev(u.Pos, pl.stage) <= 3 ||
-			(u.Pos.Y <= game.WallRow+2 && abs(u.Pos.X-pl.col) <= 3) {
+		if w.insideCastle(u.Pos) || game.Chebyshev(u.Pos, pl.stage) <= 3 ||
+			(w.wallDist(u.Pos) <= 2 && game.Chebyshev(u.Pos, pl.aim) <= 3) {
 			pl.ready++
 		}
 	}
@@ -144,28 +151,63 @@ func (w *world) free(p P) bool {
 // pickCol выбирает, где ломать стену: поближе к королю, по своему флангу
 // и, при прочих равных, там, где кладка уже подбита. Выбор держится, пока
 // не появится заметно лучший: метаться вдоль стены — терять дни.
-func (b *Bot) pickCol(w *world, king P) int {
-	aim := king.X - 1
-	if w.side == game.SideAttackerB {
-		aim = king.X + 1
-	}
-	best, bestS := 0, -1e9
-	for col := game.WallFirstCol + 1; col <= game.WallLastCol-1; col++ {
-		s := w.seg[col]
-		if s == nil {
-			continue
+func (b *Bot) pickAim(w *world, king P) P {
+	home := w.b.CampCentre(w.side)
+	// Насколько далеко до участка стены на самом деле, а не по прямой: на
+	// второй карте между лагерем и дальней стороной замка течёт река, и
+	// ломиться туда — значит простоять всю осаду на своём берегу.
+	from := []P{home}
+	for _, u := range w.own {
+		if !u.spec.Mechanism() {
+			from = append(from, u.Pos)
 		}
-		sc := -float64(abs(col - aim))
+	}
+	reach := w.flow("aim", footClass, seeds0(from), nil)
+	// Считаем не до самой кладки — под ней вода рва, туда пешему хода нет, —
+	// а до земли в двух-трёх шагах: оттуда и начинается штурм.
+	nearCost := func(p P) int {
+		best := inf
+		for _, q := range w.around(p, 2, 3) {
+			if d := reach.at(q); d < best {
+				best = d
+			}
+		}
+		return best
+	}
+	best, bestS := P{}, -1e9
+	for p, s := range w.seg {
+		cost := nearCost(p)
+		if cost >= inf {
+			continue // не дойти: за водой или за обрывом
+		}
+		// Ближе к королю — лучше; со своей стороны замка — тоже: иначе оба
+		// осаждающих ломились бы в одни ворота, толкаясь в одном проломе.
+		sc := -float64(game.Chebyshev(p, king)) - 0.45*float64(game.Chebyshev(p, home)) -
+			0.35*float64(cost)
 		if s.HP <= 0 {
 			sc += 2 // пролом уже есть — войти можно сразу
 		} else {
 			sc -= 0.6 * float64(s.HP) / float64(max(s.MaxHP, 1))
 		}
-		if col == b.mem.col {
+		if p == b.mem.aim {
+			sc += 1.5 // метаться вдоль стены — терять дни
+		}
+		// К самой кладке надо ещё подойти: под ней вода. Там, где через ров
+		// переброшен мост, подойти можно сразу — и именно туда осада
+		// ломится с первого дня, а не ждёт, пока кто-нибудь набросает фашин.
+		if reach.at(w.b.OutsideOf(p)) < inf {
 			sc += 1.5
 		}
 		if sc > bestS {
-			best, bestS = col, sc
+			best, bestS = p, sc
+		}
+	}
+	if bestS == -1e9 {
+		// Ни до одного участка не дойти — целимся хотя бы по прямой.
+		for p := range w.seg {
+			if sc := -float64(game.Chebyshev(p, home)); sc > bestS {
+				best, bestS = p, sc
+			}
 		}
 	}
 	return best
@@ -269,13 +311,13 @@ func siegeWorth(pl *siegePlan) func(w *world, t *unit) float64 {
 
 // wallWorth — урон по кладке. Свой столбец и соседние ценятся выше, а
 // удар, который роняет сегмент, — отдельно: пролом и есть цель.
-func wallWorth(pl *siegePlan) func(w *world, col, dmg int) float64 {
-	return func(w *world, col, dmg int) float64 {
-		s := w.seg[col]
+func wallWorth(pl *siegePlan) func(w *world, at P, dmg int) float64 {
+	return func(w *world, at P, dmg int) float64 {
+		s := w.seg[at]
 		if s == nil || s.HP <= 0 {
 			return 0
 		}
-		near := abs(col - pl.col)
+		near := game.Chebyshev(at, pl.aim)
 		per := 0.25
 		switch near {
 		case 0:
@@ -300,7 +342,7 @@ func wallWorth(pl *siegePlan) func(w *world, col, dmg int) float64 {
 func (b *Bot) siegeMove(w *world, pl *siegePlan, u *unit) []cand {
 	r := pl.roles[u.ID]
 	hit := func(p P) float64 { return 0.85 * pl.ev.bestHitFrom(w, u, p) }
-	inside := insideCastle(u.Pos) || tileAt(u.Pos) == game.TileWall
+	inside := w.insideCastle(u.Pos) || w.tile(u.Pos) == game.TileWall
 
 	switch {
 	case r == roleFarm || r == roleMine:
@@ -366,7 +408,7 @@ func (b *Bot) risk(w *world, u *unit, weight float64) func(P) float64 {
 	}
 	hidden := u.Lurking || !w.watched(u.Pos)
 	return func(p P) float64 {
-		if inBush(p) && hidden {
+		if w.inBush(p) && hidden {
 			return 0
 		}
 		t := w.threat(p, u)
@@ -388,7 +430,7 @@ func (b *Bot) kingField(w *world, pl *siegePlan) *field {
 	var goals []seed
 	if pl.kingUnit != nil {
 		for _, o := range dirs {
-			if p := pl.king.Add(o[0], o[1]); insideCastle(p) {
+			if p := pl.king.Add(o[0], o[1]); w.insideCastle(p) {
 				goals = append(goals, seed{p, 0})
 			}
 		}
@@ -403,7 +445,10 @@ func (b *Bot) kingField(w *world, pl *siegePlan) *field {
 	// попадают одним действием.
 	all := append([]seed{}, goals...)
 	for _, l := range pl.ladders {
-		top := P{X: l.Pos.X, Y: game.WalkRow}
+		top, ok := w.ladderTop(l.Pos)
+		if !ok {
+			continue
+		}
 		d := f.at(top)
 		if d >= inf {
 			continue
@@ -419,12 +464,12 @@ func (b *Bot) kingField(w *world, pl *siegePlan) *field {
 // дальше досягаемости стрелков со стены. Кусты в нём лучше поля.
 func (b *Bot) stageSeeds(w *world, pl *siegePlan) []seed {
 	var out []seed
-	for _, p := range around(pl.stage, 0, 2) {
-		if p.Y <= game.WallRow+2 {
+	for _, p := range w.around(pl.stage, 0, 2) {
+		if w.wallDist(p) <= 2 || !w.in(p) {
 			continue
 		}
 		d := 1
-		if inBush(p) {
+		if w.inBush(p) {
 			d = 0
 		}
 		out = append(out, seed{p, d})
@@ -436,18 +481,16 @@ func (b *Bot) stageSeeds(w *world, pl *siegePlan) []seed {
 // выбранного столбца. Оттуда видно боевой ход, а самого его не видно.
 func (b *Bot) lookoutSeeds(w *world, pl *siegePlan) []seed {
 	var out []seed
-	for y := game.WallRow + 2; y <= game.WallRow+5; y++ {
-		for x := pl.col - 4; x <= pl.col+4; x++ {
-			p := P{X: x, Y: y}
-			if !p.InBounds() {
-				continue
-			}
-			switch {
-			case inBush(p):
-				out = append(out, seed{p, 0})
-			case y >= game.WallRow+3 && abs(x-pl.col) <= 3:
-				out = append(out, seed{p, 3})
-			}
+	for _, p := range w.around(pl.aim, 2, 6) {
+		d := w.wallDist(p)
+		if !w.in(p) || d < 2 || d > 5 || w.insideCastle(p) {
+			continue
+		}
+		switch {
+		case w.inBush(p):
+			out = append(out, seed{p, 0})
+		case d >= 3 && game.Chebyshev(p, pl.aim) <= 4:
+			out = append(out, seed{p, 3})
 		}
 	}
 	return out
@@ -457,7 +500,10 @@ func (b *Bot) lookoutSeeds(w *world, pl *siegePlan) []seed {
 func (b *Bot) entrySeeds(w *world, pl *siegePlan) []seed {
 	var out []seed
 	for _, e := range pl.entries {
-		out = append(out, seed{e, 0}, seed{P{X: e.X, Y: game.WalkRow}, 0})
+		out = append(out, seed{e, 0})
+		if top, ok := w.walkBehind(e); ok {
+			out = append(out, seed{top, 0})
+		}
 	}
 	for _, l := range pl.ladders {
 		for _, o := range dirs {
@@ -496,33 +542,37 @@ func (b *Bot) woundedSeeds(w *world, healer *unit, pl *siegePlan) []seed {
 // него единица, поэтому осторожный бот ждёт, пока соберётся штурмовой
 // отряд, и подходит кустами.
 func (b *Bot) bomberMove(w *world, pl *siegePlan, u *unit) []cand {
-	target := b.chargeCol(w, pl)
-	wait := target == 0 || (b.prof.gather > 0 && pl.ready < b.prof.gather)
+	target, has := b.chargeAt(w, pl)
+	wait := !has || (b.prof.gather > 0 && pl.ready < b.prof.gather)
 	var f *field
 	if wait {
 		f = w.flow("bomber-wait", footClass, b.stageSeeds(w, pl), nil)
 	} else {
+		// Подходим к самому сегменту и к соседним: заряд кладут вплотную.
 		var goals []P
-		for x := target - 1; x <= target+1; x++ {
-			goals = append(goals, P{X: x, Y: game.WallRow + 1})
+		for _, p := range w.segsByDist(target) {
+			if game.Chebyshev(p, target) > 1 {
+				break
+			}
+			goals = append(goals, w.b.OutsideOf(p))
 		}
 		var extra func(P) int
 		if b.prof.cautious {
 			// Под чужим взглядом каждая клетка дороже: лучше крюк по
 			// кустам и туману, чем болт в первый же день у стены.
 			extra = func(p P) int {
-				if w.watched(p) && !inBush(p) {
+				if w.watched(p) && !w.inBush(p) {
 					return 3
 				}
 				return 0
 			}
 		}
-		f = w.flow(fmt.Sprintf("bomber#%d", target), footClass, seeds0(goals), extra)
+		f = w.flow(fmt.Sprintf("bomber#%d,%d", target.X, target.Y), footClass, seeds0(goals), extra)
 	}
 	risk := b.risk(w, u, 1.5)
 	to, s := w.step(u, f, 2.5, func(p P) float64 {
 		// Дошёл до стены — тут же и взорвал: ответного хода у замка не будет.
-		if !wait && p.Y == game.WallRow+1 && abs(p.X-target) <= 1 {
+		if !wait && w.wallDist(p) == 1 && game.Chebyshev(p, target) <= 1 && !w.insideCastle(p) {
 			return 0
 		}
 		return -risk(p)
@@ -532,26 +582,27 @@ func (b *Bot) bomberMove(w *world, pl *siegePlan, u *unit) []cand {
 
 // chargeCol — под какой сегмент вести подрывника: выбранный, а если он уже
 // лежит — ближайший к нему целый, чтобы пролом стал шире. 0 — некуда.
-func (b *Bot) chargeCol(w *world, pl *siegePlan) int {
-	for d := 0; d <= 3; d++ {
-		for _, col := range []int{pl.col - d, pl.col + d} {
-			if w.intact(col) {
-				return col
-			}
+func (b *Bot) chargeAt(w *world, pl *siegePlan) (P, bool) {
+	for _, p := range w.segsByDist(pl.aim) {
+		if game.Chebyshev(p, pl.aim) > 3 {
+			break
+		}
+		if w.intactAt(p) {
+			return p, true
 		}
 	}
-	return 0
+	return P{}, false
 }
 
 // catapultMove ставит катапульту на дальность выстрела по выбранному
 // столбцу — как можно дальше от стены: ближе подходить незачем, а
 // стрелки на боевом ходу бьют недалеко.
 func (b *Bot) catapultMove(w *world, pl *siegePlan, u *unit) []cand {
-	aim := P{X: pl.col, Y: game.WallRow}
+	aim := pl.aim
 	r := u.spec.Range
 	var goals []seed
-	for _, p := range around(aim, 4, r) {
-		if p.Y <= game.WallRow {
+	for _, p := range w.around(aim, 4, r) {
+		if !w.in(p) || w.insideCastle(p) || w.tile(p) == game.TileWall {
 			continue
 		}
 		goals = append(goals, seed{p, r - game.Chebyshev(p, aim)})
@@ -571,15 +622,17 @@ func (b *Bot) catapultMove(w *world, pl *siegePlan, u *unit) []cand {
 // ladderMove приставляет лестницу к стене рядом с выбранным столбцом — но
 // не к нему самому: туда идёт подрывник, и второй вход полезнее.
 func (b *Bot) ladderMove(w *world, pl *siegePlan, u *unit) []cand {
-	if u.Pos.Y == game.WallRow+1 && w.seg[u.Pos.X] != nil {
+	if _, ok := w.ladderTop(u.Pos); ok {
 		return nil // уже у стены
 	}
-	off := -2
-	if w.side == game.SideAttackerB {
-		off = 2
+	// Второй вход полезнее третьего удара в те же ворота: отходим на пару
+	// сегментов вдоль кладки от того, который ломает подрывник.
+	near := w.segsByDist(pl.aim)
+	spot := pl.aim
+	if len(near) > 2 {
+		spot = near[2]
 	}
-	col := clamp(pl.col+off, game.WallFirstCol, game.WallLastCol)
-	f := w.flow("ladder", classOf(u.spec), seeds0([]P{{X: col, Y: game.WallRow + 1}}), nil)
+	f := w.flow("ladder", classOf(u.spec), seeds0([]P{w.b.OutsideOf(spot)}), nil)
 	to, s := w.step(u, f, 1.5, b.risk(w, u, 0.6))
 	return moveCand(u, to, s)
 }
@@ -593,7 +646,7 @@ func (b *Bot) siegeWork(w *world, pl *siegePlan, u *unit) []cand {
 		out = append(out, cand{a: a, score: score, ap: ap})
 	}
 	for _, p := range u.ChargeAt {
-		add(game.Action{Kind: game.ActCharge, To: p}, max(70-5*float64(abs(p.X-pl.col)), 25), 1)
+		add(game.Action{Kind: game.ActCharge, To: p}, max(70-5*float64(game.Chebyshev(p, pl.aim)), 25), 1)
 	}
 	// Аванпост у сборного пункта: дальше отряды нанимаются прямо у стены, а
 	// не бредут по четыре дня из лагеря. Очков действия на это уходит два,
@@ -613,7 +666,7 @@ func (b *Bot) siegeWork(w *world, pl *siegePlan, u *unit) []cand {
 	}
 	if b.prof.fascines && u.typ == game.UnitInfantry {
 		for _, p := range u.FascineAt {
-			if abs(p.X-pl.col) <= 1 || w.opening(p.X) {
+			if game.Chebyshev(p, pl.aim) <= 1 || w.openingAt(p) {
 				add(game.Action{Kind: game.ActBuild, Build: "fascine", To: p}, 2.2, u.FascineAP)
 				break
 			}
@@ -661,7 +714,11 @@ func (b *Bot) siegeWants(w *world, pl *siegePlan) []want {
 	if b.prof.elite && w.v.You.Silver >= game.Spec(game.UnitKnight).Silver {
 		out = append(out, want{t: game.UnitKnight, prio: 9, near: stage})
 	}
-	if b.prof.bombers > 0 && w.count(game.UnitBomber) < b.prof.bombers && day >= 2 && b.chargeCol(w, pl) != 0 {
+	hasCharge := false
+	if _, ok := b.chargeAt(w, pl); ok {
+		hasCharge = true
+	}
+	if b.prof.bombers > 0 && w.count(game.UnitBomber) < b.prof.bombers && day >= 2 && hasCharge {
 		out = append(out, want{t: game.UnitBomber, prio: 8, near: stage})
 	}
 	if count[roleEyes] < b.prof.eyes {
@@ -730,7 +787,7 @@ func (w *world) deploySpot(wt want) (P, bool) {
 	spec := game.Spec(wt.t)
 	best, bestD, ok := P{}, 1e9, false
 	for _, p := range w.v.You.Zone {
-		if spec.CampOnly && game.CampSide(p) != w.side || wt.walk && p.Y != game.WalkRow {
+		if spec.CampOnly && w.b.CampSide(p) != w.side || wt.walk && w.tile(p) != game.TileWalk {
 			continue
 		}
 		d := float64(game.Chebyshev(p, wt.near)) + 0.3*float64(abs(p.Y-wt.near.Y))

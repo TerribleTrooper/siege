@@ -26,9 +26,16 @@ type simStats struct {
 // места 1 и 2 осаждают.
 func simulate(t testing.TB, levels [3]Level, seed int64) (*game.State, simStats) {
 	t.Helper()
+	return simulateOn(t, game.Classic, levels, seed, 0)
+}
+
+// simulateOn — то же, но на выбранной карте и, если задано, не дальше
+// указанного дня: полная партия на большой карте считается заметно дольше.
+func simulateOn(t testing.TB, bd *game.Board, levels [3]Level, seed int64, untilDay int) (*game.State, simStats) {
+	t.Helper()
 	trace := os.Getenv("SIEGE_SIM_TRACE") != ""
 	start := time.Now()
-	s := game.New([3]string{"Аня", "Боря", "Витя"})
+	s := game.NewOn(bd, [3]string{"Аня", "Боря", "Витя"})
 	var bots [3]*Bot
 	for i := range bots {
 		bots[i] = New(levels[i], seed+int64(i))
@@ -36,6 +43,9 @@ func simulate(t testing.TB, levels [3]Level, seed int64) (*game.State, simStats)
 	st := simStats{byKind: map[game.ActionKind]int{}, rejected: map[string]int{}}
 	perTurn := 0
 	for s.Phase == game.PhasePlay {
+		if untilDay > 0 && s.Day > untilDay {
+			break
+		}
 		seat := s.SeatOf(s.Turn)
 		side := s.Turn
 		v := s.ViewFor(seat)

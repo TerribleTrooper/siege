@@ -70,18 +70,21 @@ export function draw(ctx, canvas, meta, snap, ui, view) {
   const L = layout(canvas, meta, view);
   const game = snap && snap.game;
 
-  const wallByCol = new Map();
-  if (game) for (const seg of game.wall || []) wallByCol.set(seg.col, seg);
+  // Кладку ищем по клетке, а не по столбцу: на второй карте стена — кольцо,
+  // и в одном столбце её сегментов несколько.
+  const wallAt = new Map();
+  if (game) for (const seg of game.wall || []) if (seg.pos) wallAt.set(key(seg.pos.x, seg.pos.y), seg);
 
-  // Ров: сервер присылает только **незасыпанные** клетки. Остальные уже
+  // Вода: сервер присылает только **незасыпанные** клетки. Остальные уже
   // работают как поле, и канавой их рисовать нельзя — иначе игрок не увидит
   // по карте, куда можно подвести таран.
   const ditch = new Set();
-  if (game) for (const p of game.moat || []) ditch.add(p.x);
+  if (game) for (const p of game.moat || []) ditch.add(key(p.x, p.y));
 
   for (let y = 0; y < meta.rows; y++) {
     for (let x = 0; x < meta.cols; x++) {
-      drawTile(ctx, L, meta, x, y, wallByCol.get(x), y === meta.wallRow, ditch.has(x));
+      const seg = wallAt.get(key(x, y));
+      drawTile(ctx, L, meta, x, y, seg, Boolean(seg), ditch.has(key(x, y)));
     }
   }
 
@@ -92,7 +95,9 @@ export function draw(ctx, canvas, meta, snap, ui, view) {
   // Мост в две клетки: перила идут по внешним краям, а на стыке половинок
   // их быть не должно — иначе посреди настила вырастает забор.
   bridgeCells.clear();
-  for (const b of game.buildings || []) if (b.kind === 'bridge') bridgeCells.add(`${b.pos.x},${b.pos.y}`);
+  for (const b of game.buildings || []) {
+    if (b.kind === 'bridge' || b.kind === 'fort') bridgeCells.add(`${b.pos.x},${b.pos.y}`);
+  }
   for (const b of game.buildings || []) drawBuilding(ctx, L, b);
   // Туман ложится поверх ландшафта и построек, но под свои отряды и подсветку:
   // карту мы помним, а что на ней происходит сейчас — нет.
@@ -127,8 +132,11 @@ function tileRect(L, x, y) {
 
 // Земля под клетками. Цвета почти прежние, меняется фактура: по ней клетку
 // узнают и тогда, когда на ней стоит отряд.
+const key = (x, y) => y * 1000 + x;
+
 const GROUND = {
   '.': '#3f5a33', // поле
+  '~': '#1d4257', // река: та же вода, что и ров, только течёт сквозь карту
   R: '#2d2823', // скалы по флангам: непроходимы
   V: '#16120f', // обрыв: не пройти, но простреливается
   B: '#33502b', // кусты: укрытие от стрел
@@ -143,13 +151,13 @@ const GROUND = {
 function drawTile(ctx, L, meta, x, y, seg, isWallRow, moatOpen) {
   const kind = meta.tiles[y][x];
   const { x: px, y: py, s } = tileRect(L, x, y);
-  const isWall = kind === '#' || kind === 'T' || kind === 'G';
+  const isWall = kind === '#' || kind === 'T' || kind === 'G' || kind === 'A';
 
   let base = GROUND[kind] || GROUND['.'];
   // Ров: сервер присылает только **незасыпанные** клетки. Засыпанная — уже
   // земля, а настил из вязанок поверх неё рисуется постройкой: у него своя
   // прочность, и по карте видно, куда можно подвести таран.
-  if (kind === 'D') base = moatOpen ? '#1b3542' : '#3d3a26';
+  if (kind === 'D' || kind === '~') base = moatOpen ? (kind === '~' ? '#1d4257' : '#1b3542') : '#3d3a26';
   if (isWall) base = kind === 'T' ? '#7f776b' : '#8d8579';
   ctx.fillStyle = shade(base, noise(x, y) * 10 - 5);
   ctx.fillRect(px, py, s, s);
@@ -157,7 +165,7 @@ function drawTile(ctx, L, meta, x, y, seg, isWallRow, moatOpen) {
   // Купы, валуны, волны и обломки нарочно заходят за край — обрезаем их
   // клеткой. Остальная фактура в клетку укладывается сама, и лишний clip
   // на каждой из шестисот клеток кадру ни к чему.
-  const clip = kind === 'B' || kind === 'R' || kind === 'D' || isWall;
+  const clip = kind === 'B' || kind === 'R' || kind === 'D' || kind === '~' || isWall;
   if (clip) {
     ctx.save();
     ctx.beginPath();
@@ -184,6 +192,7 @@ function drawTile(ctx, L, meta, x, y, seg, isWallRow, moatOpen) {
       drawFurrows(ctx, px, py, s);
       break;
     case 'D':
+    case '~':
       drawMoat(ctx, px, py, s, x, y, moatOpen);
       break;
     case 'C':
@@ -470,6 +479,25 @@ function drawCamp(ctx, px, py, s, x, y, side) {
   ctx.globalAlpha = 1;
 }
 
+// drawArch — водяные ворота: свод над рекой. Решётки в нём нет, вода идёт
+// под аркой, поэтому и рисуется он водой с каменной перемычкой поверху.
+function drawArch(ctx, px, py, s) {
+  ctx.fillStyle = '#1d4257';
+  ctx.fillRect(px, py + s * 0.32, s, s * 0.46);
+  ctx.strokeStyle = 'rgba(126,186,214,.45)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(px, py + s * 0.55);
+  ctx.lineTo(px + s, py + s * 0.55);
+  ctx.stroke();
+  // Свод: каменная перемычка сверху и снизу, между ними вода.
+  ctx.fillStyle = 'rgba(20,16,12,.5)';
+  ctx.fillRect(px, py + s * 0.28, s, Math.max(1, s * 0.07));
+  ctx.fillRect(px, py + s * 0.74, s, Math.max(1, s * 0.07));
+  ctx.fillStyle = 'rgba(255,250,235,.12)';
+  ctx.fillRect(px, py, s, Math.max(1, s * 0.06));
+}
+
 // drawWallTile — сегмент стены в его настоящем состоянии. Вид определяем по
 // сегменту, а не по карте: деревянную створку инженеры вставляют в любой
 // пролом, и в неизменной карте её нет.
@@ -480,6 +508,10 @@ function drawWallTile(ctx, px, py, s, x, kind, seg) {
   }
   if (seg && (seg.kind === 'gate' || seg.kind === 'woodgate')) {
     drawGate(ctx, px, py, s, Boolean(seg.open), seg.kind === 'woodgate');
+    return;
+  }
+  if (kind === 'A' || (seg && seg.kind === 'arch')) {
+    drawArch(ctx, px, py, s);
     return;
   }
   // Кладка «в полкамня».
@@ -825,6 +857,21 @@ function drawTrap(ctx, L, pos) {
 // Постройка лежит на земле: квадрат без тени, тёмная кромка и рамка цвета
 // хозяина. Значок — залитый силуэт: на клетке в 30 пикселей тонкий контур
 // расплывается, а пятно читается.
+// drawFortPalisade — тын заставы поверх настила: колья по краям клетки.
+function drawFortPalisade(ctx, x, y, s, b) {
+  const n = 4;
+  const w = Math.max(1, s * 0.1);
+  const h = s * 0.42;
+  ctx.fillStyle = 'rgba(32,24,14,.75)';
+  for (let i = 0; i < n; i++) {
+    const ox = x + (s / n) * i + (s / n - w) / 2;
+    ctx.fillRect(ox, y + s * 0.06, w, h);
+  }
+  ctx.fillStyle = 'rgba(216,169,63,.55)';
+  ctx.fillRect(x + s * 0.1, y + s * 0.06, s * 0.8, Math.max(1, s * 0.06));
+  if (b && b.hp < b.maxHp) return;
+}
+
 function drawBuilding(ctx, L, b) {
   const { x, y, s } = tileRect(L, b.pos.x, b.pos.y);
   // Фашины — не постройка на клетке, а настил поверх воды: рисуем их
@@ -837,6 +884,14 @@ function drawBuilding(ctx, L, b) {
   // превратил бы переправу в сарай посреди рва.
   if (b.kind === 'bridge') {
     drawBridge(ctx, x, y, s, b);
+    return;
+  }
+  // Форпост у истока — тоже переправа, только бревенчатая и с частоколом:
+  // настил рисуем тем же мостом, а поверх ставим тын, чтобы заставу было
+  // видно за полкарты.
+  if (b.kind === 'fort') {
+    drawBridge(ctx, x, y, s, b);
+    drawFortPalisade(ctx, x, y, s, b);
     return;
   }
   const col = SIDE_COLORS[b.side] || SIDE_COLORS.neutral;

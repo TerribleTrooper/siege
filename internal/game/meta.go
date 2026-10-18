@@ -2,45 +2,60 @@ package game
 
 import "strconv"
 
+// BoardMeta — геометрия одной карты. Карт две, и клиент забирает обе разом:
+// какая из них в партии, он узнаёт из снимка.
+type BoardMeta struct {
+	Key  string `json:"key"`
+	Name string `json:"name"`
+	Cols int    `json:"cols"`
+	Rows int    `json:"rows"`
+
+	// Ряды классической карты. У карты с кольцом стены единого «ряда стены»
+	// нет, и там эти поля равны −1: клиент по ним и отличает одну от другой.
+	WallRow   int    `json:"wallRow"`
+	WalkRow   int    `json:"walkRow"`
+	ThroneRow int    `json:"throneRow"`
+	CampRow   int    `json:"campRow"`
+	WallCols  [2]int `json:"wallCols"`
+	GateCols  [2]int `json:"gateCols"`
+
+	MineTiles  []Point  `json:"mineTiles"`
+	FarmTiles  []Point  `json:"farmTiles"`
+	PitchTiles []Point  `json:"pitchTiles"`
+	GateTiles  []Point  `json:"gateTiles"`
+	Tiles      []string `json:"tiles"` // плоская карта типов клеток, строка за строкой
+}
+
 // Meta — неизменные данные: клиент забирает их один раз и не дублирует баланс.
 type Meta struct {
-	Cols        int        `json:"cols"`
-	Rows        int        `json:"rows"`
-	WallRow     int        `json:"wallRow"`
-	WalkRow     int        `json:"walkRow"`
-	ThroneRow   int        `json:"throneRow"`
-	CampRow     int        `json:"campRow"`
-	WallCols    [2]int     `json:"wallCols"`
-	GateCols    [2]int     `json:"gateCols"`
-	Days        int        `json:"days"`
-	SeatSides   []string   `json:"seatSides"` // роль каждого места: в лобби её видно до начала партии
-	AP          int        `json:"ap"`
-	MineTiles   []Point    `json:"mineTiles"`
-	FarmTiles   []Point    `json:"farmTiles"`
-	FarmSupply  int        `json:"farmSupply"`
-	SilverPer   int        `json:"silverPerTile"`
-	BushCost    int        `json:"bushCost"`
-	Specs       []UnitSpec `json:"specs"`
-	Abilities   []Ability  `json:"abilities"`
-	Builds      []Ability  `json:"builds"`       // что умеют инженеры замка
-	SapBuilds   []Ability  `json:"sapperBuilds"` // ... и полевые инженеры осады
-	Outpost     Ability    `json:"outpost"`      // аванпост осаждающих
-	WatchPost   Ability    `json:"watchPost"`    // наблюдательный пункт: ставят обе стороны
-	Fascine     Ability    `json:"fascine"`      // засыпать ров: работа осаждающих
-	Store       Ability    `json:"store"`        // склад в лагере осаждающих
-	WatchPostAP int        `json:"watchPostAp"`
-	OutpostAP   int        `json:"outpostAp"`
-	ConstructAP int        `json:"constructAp"` // стройка во дворе замка
-	Rally       Ability    `json:"rally"`       // воодушевление: доступно всем троим
-	TowerSupply int        `json:"towerSupply"` // припасы за удержанный наблюдательный пункт
-	TowerBonus  int        `json:"towerBonus"`  // +дальность тому, кто сидит внутри
-	APCarry     int        `json:"apCarry"`     // припасов за одно неизрасходованное очко
-	BushCut     int        `json:"bushCut"`
-	Ambush      int        `json:"ambush"`     // множитель удара из засады
-	Heal        int        `json:"heal"`       // сколько HP возвращает лекарь
-	PitchTiles  []Point    `json:"pitchTiles"` // куда можно лить смолу
-	MaxRepairs  int        `json:"maxRepairs"` // сколько раз за ход можно отстраивать стену
-	MaxHires    int        `json:"maxHires"`   // и сколько отрядов можно нанять
+	Boards      map[string]BoardMeta `json:"boards"`
+	Days        int                  `json:"days"`
+	SeatSides   []string             `json:"seatSides"` // роль каждого места: в лобби её видно до начала партии
+	AP          int                  `json:"ap"`
+	FarmSupply  int                  `json:"farmSupply"`
+	SilverPer   int                  `json:"silverPerTile"`
+	BushCost    int                  `json:"bushCost"`
+	Specs       []UnitSpec           `json:"specs"`
+	Abilities   []Ability            `json:"abilities"`
+	Builds      []Ability            `json:"builds"`       // что умеют инженеры замка
+	SapBuilds   []Ability            `json:"sapperBuilds"` // ... и полевые инженеры осады
+	Outpost     Ability              `json:"outpost"`      // аванпост осаждающих
+	WatchPost   Ability              `json:"watchPost"`    // наблюдательный пункт: ставят обе стороны
+	Fascine     Ability              `json:"fascine"`      // засыпать ров: работа осаждающих
+	Store       Ability              `json:"store"`        // склад в лагере осаждающих
+	WatchPostAP int                  `json:"watchPostAp"`
+	OutpostAP   int                  `json:"outpostAp"`
+	ConstructAP int                  `json:"constructAp"` // стройка во дворе замка
+	Rally       Ability              `json:"rally"`       // воодушевление: доступно всем троим
+	TowerSupply int                  `json:"towerSupply"` // припасы за удержанный наблюдательный пункт
+	TowerBonus  int                  `json:"towerBonus"`  // +дальность тому, кто сидит внутри
+	APCarry     int                  `json:"apCarry"`     // припасов за одно неизрасходованное очко
+	BushCut     int                  `json:"bushCut"`
+	Ambush      int                  `json:"ambush"`     // множитель удара из засады
+	Heal        int                  `json:"heal"`       // сколько HP возвращает лекарь
+	PitchTiles  []Point              `json:"pitchTiles"` // куда можно лить смолу
+	MaxRepairs  int                  `json:"maxRepairs"` // сколько раз за ход можно отстраивать стену
+	MaxHires    int                  `json:"maxHires"`   // и сколько отрядов можно нанять
 
 	// Потолок обоза и насколько его поднимает склад: без этих чисел
 	// исчезающий излишек припасов выглядел бы ошибкой сервера.
@@ -51,8 +66,6 @@ type Meta struct {
 	VeteranStars  int `json:"veteranStars"`
 	VeteranDamage int `json:"veteranDamage"`
 	VeteranHP     int `json:"veteranHp"`
-
-	Tiles []string `json:"tiles"` // плоская карта типов клеток, строка за строкой
 
 	// Terrain — что за клетка и как она работает: по символу из Tiles, плюс
 	// woodgate и breach для сегментов стены, которые сменили вид по ходу
@@ -88,13 +101,8 @@ type Ability struct {
 
 func NewMeta() Meta {
 	m := Meta{
-		Cols: Cols, Rows: Rows,
-		WallRow: WallRow, WalkRow: WalkRow, ThroneRow: ThroneRow, CampRow: CampRowFirst,
-		WallCols: [2]int{WallFirstCol, WallLastCol},
-		GateCols: [2]int{GateColLeft, GateColRight},
-		Days:     SiegeDays, AP: APPerTurn,
-		MineTiles:     MineTiles(),
-		FarmTiles:     FarmTiles(),
+		Days: SiegeDays, AP: APPerTurn,
+		Boards:        map[string]BoardMeta{},
 		FarmSupply:    FarmSupply,
 		SilverPer:     SilverPerTile,
 		BushCost:      BushMoveCost,
@@ -102,7 +110,6 @@ func NewMeta() Meta {
 		BushCut:       BushCoverCut,
 		Ambush:        AmbushFactor,
 		Heal:          HealAmount,
-		PitchTiles:    PitchTiles(),
 		MaxRepairs:    MaxWallRepairs,
 		MaxHires:      MaxDeploysPerTurn,
 		SupplyCap:     SupplyCap,
@@ -189,14 +196,35 @@ func NewMeta() Meta {
 	for _, sd := range seatSides {
 		m.SeatSides = append(m.SeatSides, sd.String())
 	}
-	for y := 0; y < Rows; y++ {
-		row := make([]byte, 0, Cols)
-		for x := 0; x < Cols; x++ {
-			row = append(row, tileChar(Point{x, y}))
-		}
-		m.Tiles = append(m.Tiles, string(row))
+	for _, b := range Boards() {
+		m.Boards[b.Key] = b.meta()
 	}
 	return m
+}
+
+// meta — геометрия карты для клиента.
+func (b *Board) meta() BoardMeta {
+	bm := BoardMeta{
+		Key: b.Key, Name: b.Name, Cols: b.Cols, Rows: b.Rows,
+		WallRow: -1, WalkRow: -1, ThroneRow: -1, CampRow: -1,
+		WallCols: [2]int{-1, -1}, GateCols: [2]int{-1, -1},
+		MineTiles: b.MineTiles(), FarmTiles: b.FarmTiles(),
+		PitchTiles: b.PitchTiles(), GateTiles: b.GateTiles(),
+	}
+	if b == Classic {
+		bm.WallRow, bm.WalkRow = WallRow, WalkRow
+		bm.ThroneRow, bm.CampRow = ThroneRow, CampRowFirst
+		bm.WallCols = [2]int{WallFirstCol, WallLastCol}
+		bm.GateCols = [2]int{GateColLeft, GateColRight}
+	}
+	for y := 0; y < b.Rows; y++ {
+		row := make([]byte, 0, b.Cols)
+		for x := 0; x < b.Cols; x++ {
+			row = append(row, b.tileChar(Point{x, y}))
+		}
+		bm.Tiles = append(bm.Tiles, string(row))
+	}
+	return bm
 }
 
 func itoa(v int) string { return strconv.Itoa(v) }
@@ -221,6 +249,13 @@ func terrainInfo() map[string]Info {
 				" серебра. Серебро платит только рудник, а нужно оно на элиту: рыцарей и арбалетчиков."},
 		"F": {Label: "Пашня", Short: "+" + itoa(FarmSupply) + " припаса в ход",
 			Hint: "Кто стоит на клетке в начале своего хода, получает +" + itoa(FarmSupply) + " припаса."},
+		"~": {Label: "Река", Short: "в воду не входит никто",
+			Hint: "Та же вода, что и ров: ни пеший, ни колёсный в неё не войдут. Через реку " +
+				"переходят по мостам, по форпосту у истока или по настилу из фашин — " +
+				"настил держит " + itoa(FascineHP) + " прочности."},
+		"A": {Label: "Водяные ворота", Short: "арка над рекой · " + itoa(ArchHP) + " прочности",
+			Hint: "Свод, под которым река входит в замок. Решётки в нём нет, зато кладки меньше, " +
+				"чем в стене: пролом в арке впускает в замок по воде, минуя ров."},
 		"D": {Label: "Ров с водой", Short: "в воду не входит никто",
 			Hint: "Воду не переходит ни пеший, ни колёсный: единственная дорога через ров — настил. " +
 				"Осаждающие засыпают ров фашинами: настил держит " + itoa(FascineHP) + " прочности, а сломают — вода вернётся."},
@@ -277,14 +312,18 @@ func structureInfo() map[string]Info {
 		BuildPalisade.String(): {Label: BuildPalisade.Label(), Short: "перекрывает клетку",
 			Hint: "Перекрывает клетку, " + itoa(PalisadeHP) + " прочности. Ставят полевые инженеры осады — " +
 				"по колу за действие."},
+		BuildFort.String(): {Label: BuildFort.Label(), Short: "верхняя переправа · " + itoa(FortHP) + " прочности",
+			Hint: "Бревенчатая застава поперёк ручья у самого истока, ничья. Это единственная " +
+				"переправа выше по течению, и до неё от обоих лагерей ровно одинаково. " +
+				"Сломают — переправы здесь больше нет, и река выше замка становится сплошной."},
 		BuildBridge.String(): {Label: BuildBridge.Label(), Short: "переправа у ворот",
 			Hint: "Старый мост напротив ворот, " + itoa(BridgeHP) + " прочности. Он ничей: осада подходит по нему к воротам с первого дня, замок ломает его, чтобы вернуть воду под стену, а полевые инженеры осады чинят. Сломают — на его месте снова открытая вода."},
 	}
 }
 
 // tileChar — компактная кодировка карты для отрисовки.
-func tileChar(p Point) byte {
-	switch TileAt(p) {
+func (b *Board) tileChar(p Point) byte {
+	switch b.TileAt(p) {
 	case TileCliff:
 		return 'R'
 	case TileRavine:
@@ -297,20 +336,24 @@ func tileChar(p Point) byte {
 		return 'F'
 	case TileMoat:
 		return 'D'
+	case TileRiver:
+		return '~'
 	case TileCourtyard:
 		return 'C'
 	case TileWalk:
 		return 'W'
 	case TileWall:
-		if p.X == GateColLeft || p.X == GateColRight {
+		switch b.segKind[p] {
+		case SegGate:
 			return 'G'
-		}
-		if towerCols[p.X] {
+		case SegTower:
 			return 'T'
+		case SegArch:
+			return 'A'
 		}
 		return '#'
 	case TileCamp:
-		if CampSide(p) == SideAttackerA {
+		if b.CampSide(p) == SideAttackerA {
 			return 'a'
 		}
 		return 'b'

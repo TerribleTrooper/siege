@@ -4,6 +4,9 @@ package game
 // (засады, ловушки) вырезается здесь, а не на клиенте: иначе её можно подсмотреть
 // в сетевом трафике.
 type View struct {
+	// Map — ключ карты этой партии. Клиент по нему берёт нужную геометрию
+	// из меты, бот — нужную доску: карт в игре две.
+	Map       string         `json:"map"`
 	Phase     string         `json:"phase"`
 	Day       int            `json:"day"`
 	Days      int            `json:"days"`
@@ -312,6 +315,7 @@ func (s *State) ViewFor(seat int) View {
 	myTurn := side == s.Turn && s.Phase == PhasePlay
 
 	v := View{
+		Map: s.b.Key,
 		// Пустые срезы инициализируем явно: nil-срез уезжает в JSON как null,
 		// и клиент спотыкается на нём ровно тогда, когда туман спрятал всё.
 		Seats:     []SeatView{},
@@ -365,7 +369,7 @@ func (s *State) ViewFor(seat int) View {
 		v.You.Income, v.You.IncomeParts, v.You.SilverIncome = IncomeTotal(parts), parts, silver
 	}
 	vis := s.VisibleFor(side)
-	v.Fog = fogRows(vis)
+	v.Fog = s.fogRows(vis)
 	if open := s.moatOpenFor(side, vis); len(open) > 0 {
 		v.Moat = open
 	}
@@ -396,7 +400,7 @@ func (s *State) ViewFor(seat int) View {
 			v.Traps = append(v.Traps, t.Pos)
 		}
 	}
-	for _, p := range MineTiles() {
+	for _, p := range s.b.MineTiles() {
 		mv := MineView{Pos: p, Side: SideNeutral.String()}
 		// Кто держит рудник, видно только если клетка просматривается.
 		if u := s.unitAt(p); u != nil && (u.Owner == side || vis[p]) {
@@ -406,7 +410,7 @@ func (s *State) ViewFor(seat int) View {
 	}
 	// Пашни — та же логика, что у рудника: клетка на виду, но кто на ней
 	// стоит, видно только через свой обзор.
-	for _, p := range FarmTiles() {
+	for _, p := range s.b.FarmTiles() {
 		fv := MineView{Pos: p, Side: SideNeutral.String()}
 		if u := s.unitAt(p); u != nil && (u.Owner == side || vis[p]) {
 			fv.Side = u.Owner.String()
@@ -572,8 +576,8 @@ func (s *State) ViewFor(seat int) View {
 
 func (s *State) deployTiles(side Side) []Point {
 	var out []Point
-	for y := 0; y < Rows; y++ {
-		for x := 0; x < Cols; x++ {
+	for y := 0; y < s.b.Rows; y++ {
+		for x := 0; x < s.b.Cols; x++ {
 			p := Point{x, y}
 			if s.deployZone(side, p) && s.unitAt(p) == nil {
 				out = append(out, p)
@@ -596,8 +600,8 @@ func (s *State) AttackTargets(u *Unit) []Point {
 		return nil
 	}
 	var out []Point
-	for y := 0; y < Rows; y++ {
-		for x := 0; x < Cols; x++ {
+	for y := 0; y < s.b.Rows; y++ {
+		for x := 0; x < s.b.Cols; x++ {
 			p := Point{x, y}
 			d := Chebyshev(u.Pos, p)
 			if d < 1 || d > reach {
@@ -607,8 +611,8 @@ func (s *State) AttackTargets(u *Unit) []Point {
 			// Пустая клетка стены — кладка, занятая — цель. Отряд в проломе
 			// или в воротах бьют как любого другого: именно из-за обратного
 			// порядка он раньше и оказывался неуязвимым.
-			if t == nil && TileAt(p) == TileWall {
-				seg := s.segment(p.X)
+			if t == nil && s.b.TileAt(p) == TileWall {
+				seg := s.segment(p)
 				if seg == nil || seg.Breached() || !u.Owner.IsAttacker() || spec.VsWall <= 0 {
 					continue
 				}
@@ -652,15 +656,15 @@ func (s *State) builderSpots(u *Unit) (build []Point, fix []Point) {
 	}
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if !p.InBounds() {
+		if !s.b.In(p) {
 			continue
 		}
 		if s.outdoorBuildable(p) {
 			build = append(build, p)
 			continue
 		}
-		if TileAt(p) == TileWall {
-			if seg := s.segment(p.X); seg != nil && !seg.Breached() && seg.HP < seg.MaxHP {
+		if s.b.TileAt(p) == TileWall {
+			if seg := s.segment(p); seg != nil && !seg.Breached() && seg.HP < seg.MaxHP {
 				fix = append(fix, p)
 			}
 			continue
@@ -704,7 +708,7 @@ func (s *State) visibleBuilding(b *Building, side Side, vis map[Point]bool) bool
 // не имело бы смысла.
 func (s *State) moatOpenFor(side Side, vis map[Point]bool) []Point {
 	var out []Point
-	for _, p := range MoatTiles() {
+	for _, p := range s.b.WaterTiles() {
 		b := s.buildingAt(p)
 		if b != nil && b.Kind.Deck() && s.visibleBuilding(b, side, vis) {
 			continue
@@ -725,7 +729,7 @@ func (s *State) fenceLines(u *Unit) [][]Point {
 	var out [][]Point
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if p.InBounds() && s.outdoorBuildable(p) {
+		if s.b.In(p) && s.outdoorBuildable(p) {
 			out = append(out, s.fenceLine(u.Pos, p))
 		}
 	}

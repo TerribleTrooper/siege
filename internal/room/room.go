@@ -112,6 +112,10 @@ type Room struct {
 	ID   string
 	Mode Mode
 
+	// board — карта этой комнаты. Выбирается при создании и дальше не
+	// меняется: партию на ней начинают все, кто в комнату зашёл.
+	board *game.Board
+
 	mu       sync.Mutex
 	state    *game.State
 	players  []*Player
@@ -139,6 +143,7 @@ func newRoom(id string, mode Mode, turnTimeout time.Duration) *Room {
 	return &Room{
 		ID:      id,
 		Mode:    mode,
+		board:   game.Classic,
 		voice:   map[int]bool{},
 		subs:    map[int]*subscriber{},
 		created: now,
@@ -286,13 +291,13 @@ func (r *Room) maybeStartLocked(hotseatNames *[3]string) {
 	}
 	switch {
 	case hotseatNames != nil:
-		r.state = game.New(*hotseatNames)
+		r.state = game.NewOn(r.board, *hotseatNames)
 	case len(r.players) == seats:
 		var names [3]string
 		for i, p := range r.players {
 			names[i] = p.Name
 		}
-		r.state = game.New(names)
+		r.state = game.NewOn(r.board, names)
 	default:
 		return
 	}

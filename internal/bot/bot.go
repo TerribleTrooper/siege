@@ -176,8 +176,8 @@ type memory struct {
 
 	rejected map[string]bool // что сервер отбил в этом ходу
 
-	col       int        // столбец стены, который ломаем
-	front     int        // замок: где враг последний раз жался к стене
+	aim       game.Point // участок кладки, который ломаем
+	front     game.Point // замок: где враг последний раз жался к стене
 	refuge    game.Point // замок: куда уводим короля
 	hasRefuge bool
 	wing      int        // замок: в какой половине двора прятать короля, ±1

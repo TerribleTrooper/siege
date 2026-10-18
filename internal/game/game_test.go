@@ -92,7 +92,7 @@ func TestRamBreaksGateThenCapture(t *testing.T) {
 		t.Fatal("таран не должен бить обычную стену")
 	}
 	hits := 0
-	for s.segment(GateColRight).HP > 0 && hits < 20 {
+	for s.segmentCol(GateColRight).HP > 0 && hits < 20 {
 		if s.AP == 0 {
 			giveTurn(t, s, SideDefender)
 			giveTurn(t, s, SideAttackerA)
@@ -103,7 +103,7 @@ func TestRamBreaksGateThenCapture(t *testing.T) {
 		hits++
 		s.turnCounter++ // таран успевает ударить раз в ход
 	}
-	if !s.segment(GateColRight).Breached() {
+	if !s.segmentCol(GateColRight).Breached() {
 		t.Fatal("ворота не пробиты")
 	}
 	if !s.breached[SideAttackerA] {
@@ -160,7 +160,7 @@ func TestBomberBreachesWithOneCharge(t *testing.T) {
 	if err := s.Apply(SideAttackerA, Action{Kind: ActCharge, UnitID: bomb.ID, To: Point{col, WallRow}}); err != nil {
 		t.Fatalf("закладка заряда: %v", err)
 	}
-	if !s.segment(col).Breached() {
+	if !s.segmentCol(col).Breached() {
 		t.Fatal("одного заряда должно хватать на сегмент целиком")
 	}
 	if !s.breached[SideAttackerA] {
@@ -187,7 +187,7 @@ func TestBomberNeedsToStandUnderIntactWall(t *testing.T) {
 	}
 
 	// И в готовый пролом тоже: подрывать там уже нечего.
-	s.segment(col).HP = 0
+	s.segmentCol(col).HP = 0
 	near := s.spawn(SideAttackerA, UnitBomber, Point{col, WallRow + 1})
 	near.movedTurn, near.actedTurn = 0, 0
 	if err := s.Apply(SideAttackerA, Action{Kind: ActCharge, UnitID: near.ID, To: Point{col, WallRow}}); err == nil {
@@ -239,7 +239,7 @@ func TestUnusedAPBecomesSupplies(t *testing.T) {
 func TestRebuildClosesEmptyBreach(t *testing.T) {
 	s := newTestGame()
 	s.supplies[SideDefender] = RebuildCost * 3
-	seg := s.segment(GateColLeft)
+	seg := s.segmentCol(GateColLeft)
 	seg.HP = 0
 
 	before := s.Supplies(SideDefender)
@@ -616,9 +616,10 @@ func openArea(t *testing.T, s *State, r int) Point {
 			if !p.InBounds() {
 				continue
 			}
-			if k, ok := terrain[p]; ok {
+			switch k := Classic.TileAt(p); k {
+			case TileBush, TileRavine, TileMine, TileFarm:
 				saved[p] = k
-				delete(terrain, p)
+				Classic.setTile(p, TileField)
 			}
 			if b := s.buildingAt(p); b != nil {
 				s.removeBuilding(b)
@@ -630,7 +631,7 @@ func openArea(t *testing.T, s *State, r int) Point {
 	}
 	t.Cleanup(func() {
 		for p, k := range saved {
-			terrain[p] = k
+			Classic.setTile(p, k)
 		}
 	})
 	return centre
@@ -807,7 +808,7 @@ func TestEngineerBarricadeAndRepair(t *testing.T) {
 	// Инженеры чинят постройки, а не стену: кладку либо отстраивают целиком,
 	// либо она лежит.
 	s2 := newTestGame()
-	seg := s2.segment(GateColLeft)
+	seg := s2.segmentCol(GateColLeft)
 	seg.HP = 10
 	fixer := s2.spawn(SideDefender, UnitEngineer, Point{GateColLeft - 1, WalkRow})
 	if err := s2.Apply(SideDefender, Action{Kind: ActBuild, UnitID: fixer.ID, Build: "repair", To: Point{GateColLeft, WallRow}}); err == nil {
@@ -1418,12 +1419,12 @@ func TestRamHitsOnlyGates(t *testing.T) {
 		if TileAt(p) != TileWall {
 			t.Fatalf("у тарана в целях не стена: %v (%s)", p, TileAt(p))
 		}
-		if seg := s.segment(p.X); seg == nil || seg.Kind != SegGate {
+		if seg := s.segment(p); seg == nil || seg.Kind != SegGate {
 			t.Fatalf("таран целится не в ворота: столбец %d", p.X)
 		}
 	}
 
-	gate := s.segment(GateColLeft)
+	gate := s.segmentCol(GateColLeft)
 	before := gate.HP
 	if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: ram.ID, To: Point{GateColLeft, WallRow}}); err != nil {
 		t.Fatalf("удар по воротам: %v", err)
@@ -1532,7 +1533,7 @@ func TestCastleBuildsInCourtyard(t *testing.T) {
 	if cost != baseCost-ForgeRebuildCut {
 		t.Fatalf("кузница не удешевила отстройку: было %d, стало %d", baseCost, cost)
 	}
-	seg := s.segment(GateColLeft)
+	seg := s.segmentCol(GateColLeft)
 	seg.HP = 0
 	s.supplies[SideDefender] = cost
 	if err := s.Apply(SideDefender, Action{Kind: ActAbility, Ability: "rebuild", Col: GateColLeft}); err != nil {
@@ -1663,7 +1664,7 @@ func TestRallyDoublesDamageForOneTurn(t *testing.T) {
 
 	// И по укреплениям тоже: таран под воодушевлением сносит ворота вдвое быстрее.
 	ram := s.spawn(SideAttackerA, UnitRam, Point{GateColLeft, WallRow + 1})
-	gate := s.segment(GateColLeft)
+	gate := s.segmentCol(GateColLeft)
 	before := gate.HP
 	if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: ram.ID, To: Point{GateColLeft, WallRow}}); err != nil {
 		t.Fatalf("удар тарана: %v", err)
@@ -2127,7 +2128,7 @@ func TestRamsAreCappedPerAttacker(t *testing.T) {
 		t.Fatalf("таранов не должно быть больше %d", Spec(UnitRam).MaxAlive)
 	}
 	// Два тарана ворота за один день не сносят — в этом и смысл предела.
-	gate := s.segment(GateColLeft)
+	gate := s.segmentCol(GateColLeft)
 	perTurn := Spec(UnitRam).Damage * Spec(UnitRam).VsWall * Spec(UnitRam).MaxAlive
 	if perTurn >= gate.MaxHP {
 		t.Fatalf("два тарана наносят %d по воротам на %d — предел не держит", perTurn, gate.MaxHP)
@@ -2250,7 +2251,7 @@ func TestEmptyTowerIsBothTargetAndStep(t *testing.T) {
 func TestUnitInBreachIsNotInvulnerable(t *testing.T) {
 	s := newTestGame()
 	col := GateColLeft
-	s.segment(col).HP = 0 // ворота выбиты
+	s.segmentCol(col).HP = 0 // ворота выбиты
 	at := Point{col, WallRow}
 
 	giveTurn(t, s, SideAttackerA)
@@ -2273,7 +2274,7 @@ func TestUnitInBreachIsNotInvulnerable(t *testing.T) {
 		t.Fatalf("отряд в проломе не получил урона: %d -> %d", hp, holder.HP)
 	}
 	// И сам пролом от этого не «починился»: бить было по человеку.
-	if s.segment(col).HP != 0 {
+	if s.segmentCol(col).HP != 0 {
 		t.Fatal("удар по отряду не должен трогать сегмент")
 	}
 }
@@ -2291,14 +2292,14 @@ func TestUnitInGateIsAttackable(t *testing.T) {
 	inf := s.spawn(SideAttackerA, UnitInfantry, at.Add(0, 1))
 	inf.movedTurn, inf.actedTurn = 0, 0
 
-	hp, segHP := sortie.HP, s.segment(GateColRight).HP
+	hp, segHP := sortie.HP, s.segmentCol(GateColRight).HP
 	if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: inf.ID, To: at}); err != nil {
 		t.Fatalf("удар по отряду в воротах: %v", err)
 	}
 	if sortie.HP >= hp {
 		t.Fatalf("отряд в воротах не получил урона: %d -> %d", hp, sortie.HP)
 	}
-	if s.segment(GateColRight).HP != segHP {
+	if s.segmentCol(GateColRight).HP != segHP {
 		t.Fatal("удар ушёл в ворота вместо отряда")
 	}
 }
@@ -2308,7 +2309,7 @@ func TestUnitInGateIsAttackable(t *testing.T) {
 func TestSplashHitsUnitOnWallLine(t *testing.T) {
 	s := newTestGame()
 	col := WallFirstCol + 6
-	s.segment(col).HP = 0
+	s.segmentCol(col).HP = 0
 	at := Point{col, WallRow}
 
 	giveTurn(t, s, SideAttackerA)
@@ -2336,11 +2337,11 @@ func TestKnightDoesNotDamageWalls(t *testing.T) {
 	if Spec(UnitKnight).VsWall != 0 {
 		t.Fatalf("у рыцаря множитель по стене %d, ждали 0", Spec(UnitKnight).VsWall)
 	}
-	before := s.segment(col).HP
+	before := s.segmentCol(col).HP
 	if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: kn.ID, To: Point{col, WallRow}}); err == nil {
 		t.Fatal("рыцарь не должен бить стену")
 	}
-	if s.segment(col).HP != before {
+	if s.segmentCol(col).HP != before {
 		t.Fatal("стена всё-таки получила урон от рыцаря")
 	}
 	if containsPoint(s.AttackTargets(kn), Point{col, WallRow}) {
@@ -2403,7 +2404,7 @@ func TestKingIsMeleeOnly(t *testing.T) {
 func TestKingWalksOnlyInsideCastle(t *testing.T) {
 	s := newTestGame()
 	king := s.King(SideDefender)
-	s.segment(GateColLeft).HP = 0 // пролом в воротах: выход как будто открыт
+	s.segmentCol(GateColLeft).HP = 0 // пролом в воротах: выход как будто открыт
 
 	moves := s.Reachable(king)
 	if len(moves) == 0 {
@@ -2454,12 +2455,12 @@ func TestWallRebuildLimitPerTurn(t *testing.T) {
 		t.Fatalf("в начале хода ждали %d отстроек, есть %d", MaxWallRepairs, got)
 	}
 	for i := 0; i < MaxWallRepairs; i++ {
-		s.segment(cols[i]).HP = 0
+		s.segmentCol(cols[i]).HP = 0
 		if err := s.Apply(SideDefender, Action{Kind: ActAbility, Ability: "rebuild", Col: cols[i]}); err != nil {
 			t.Fatalf("отстройка %d: %v", i+1, err)
 		}
 	}
-	s.segment(cols[MaxWallRepairs]).HP = 0
+	s.segmentCol(cols[MaxWallRepairs]).HP = 0
 	if err := s.Apply(SideDefender, Action{Kind: ActAbility, Ability: "rebuild", Col: cols[MaxWallRepairs]}); err == nil {
 		t.Fatal("третья отстройка за ход должна быть запрещена")
 	}
@@ -2583,10 +2584,10 @@ func TestBomberPicksSegment(t *testing.T) {
 	if err := s.Apply(SideAttackerA, Action{Kind: ActCharge, UnitID: bomb.ID, To: pick}); err != nil {
 		t.Fatalf("закладка заряда: %v", err)
 	}
-	if !s.segment(col + 1).Breached() {
+	if !s.segmentCol(col + 1).Breached() {
 		t.Fatal("выбранный сегмент должен быть снесён")
 	}
-	if s.segment(col).Breached() {
+	if s.segmentCol(col).Breached() {
 		t.Fatal("сегмент под ногами трогать не просили")
 	}
 }
@@ -2624,11 +2625,11 @@ func TestOnlySiegeEnginesBreakWalls(t *testing.T) {
 	for _, tp := range []UnitType{UnitInfantry, UnitKnight, UnitScout} {
 		u := s.spawn(SideAttackerA, tp, Point{col, WallRow + 2})
 		u.movedTurn, u.actedTurn = 0, 0
-		before := s.segment(col).HP
+		before := s.segmentCol(col).HP
 		if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: u.ID, To: at}); err == nil {
 			t.Fatalf("%s пробил стену", Spec(tp).Label)
 		}
-		if s.segment(col).HP != before {
+		if s.segmentCol(col).HP != before {
 			t.Fatalf("%s всё-таки повредил стену", Spec(tp).Label)
 		}
 		if containsPoint(s.AttackTargets(u), at) {
@@ -2688,8 +2689,8 @@ func TestPitchPoursBelowTheWall(t *testing.T) {
 		}
 	}
 	tiles := PitchTiles()
-	if len(tiles) != SegmentCount {
-		t.Fatalf("клеток для смолы %d, сегментов %d", len(tiles), SegmentCount)
+	if len(tiles) != Classic.Segments() {
+		t.Fatalf("клеток для смолы %d, сегментов %d", len(tiles), Classic.Segments())
 	}
 	for _, p := range tiles {
 		if p.Y != WallRow+1 {
@@ -2777,7 +2778,7 @@ func TestKingStartsWithTemplarGuard(t *testing.T) {
 		t.Fatalf("храмовник: %d HP, урон %d — ждали 25 и 2", spec.MaxHP, spec.Damage)
 	}
 	// И за стену её не выпускают.
-	s.segment(GateColLeft).HP = 0
+	s.segmentCol(GateColLeft).HP = 0
 	for _, p := range s.Reachable(guards[0]) {
 		if !IsInsideCastle(p) {
 			t.Fatalf("храмовник дошёл до %v (%s) — стража не покидает замок", p, TileAt(p))
@@ -3006,7 +3007,7 @@ func TestSiegeTowerCarriesUnitsOntoTheWall(t *testing.T) {
 		t.Fatal("трап должен быть опущен")
 	}
 	// Стена при этом целая — в том и смысл башни.
-	if s.segment(col).Breached() {
+	if s.segmentCol(col).Breached() {
 		t.Fatal("для башни пролом не нужен")
 	}
 
@@ -3317,7 +3318,7 @@ func TestPortcullisOpensForEveryone(t *testing.T) {
 	s := newTestGame()
 	col := GateColLeft
 	gate := Point{col, WallRow}
-	seg := s.segment(col)
+	seg := s.segmentCol(col)
 	if !seg.Kind.IsGate() || seg.Open {
 		t.Fatal("ворота должны начинать осаду с опущенной решёткой")
 	}
@@ -3332,8 +3333,8 @@ func TestPortcullisOpensForEveryone(t *testing.T) {
 	if err := s.Apply(SideDefender, Action{Kind: ActAbility, Ability: "gate", Col: col}); err != nil {
 		t.Fatalf("поднять решётку: %v", err)
 	}
-	if !s.segment(col).Open || s.AP != ap-GateAPCost {
-		t.Fatalf("решётка %v, очков %d из %d", s.segment(col).Open, s.AP, ap)
+	if !s.segmentCol(col).Open || s.AP != ap-GateAPCost {
+		t.Fatalf("решётка %v, очков %d из %d", s.segmentCol(col).Open, s.AP, ap)
 	}
 	if !containsPoint(s.Reachable(out), gate) {
 		t.Fatal("в поднятую решётку защитник должен проходить")
@@ -3360,7 +3361,7 @@ func TestPortcullisOpensForEveryone(t *testing.T) {
 	if err := s.Apply(SideDefender, Action{Kind: ActAbility, Ability: "gate", Col: col}); err != nil {
 		t.Fatalf("опустить решётку: %v", err)
 	}
-	if s.segment(col).Open {
+	if s.segmentCol(col).Open {
 		t.Fatal("решётка должна закрыться")
 	}
 }
@@ -3606,7 +3607,7 @@ func TestEngineerRepairsWallAndEngine(t *testing.T) {
 	s := newTestGame()
 	giveTurn(t, s, SideDefender)
 	col := WallFirstCol + 2
-	seg := s.segment(col)
+	seg := s.segmentCol(col)
 	seg.HP = 5
 	s.supplies[SideDefender] = 100
 	eng := s.spawn(SideDefender, UnitEngineer, Point{col, WalkRow})
@@ -3624,7 +3625,7 @@ func TestEngineerRepairsWallAndEngine(t *testing.T) {
 	}
 
 	// Пролом так не поднять: для него отстройка или деревянные ворота.
-	other := s.segment(col + 1)
+	other := s.segmentCol(col + 1)
 	other.HP = 0
 	eng.actedTurn = 0
 	if err := s.Apply(SideDefender, Action{Kind: ActBuild, UnitID: eng.ID, Build: "repair",
@@ -3658,7 +3659,7 @@ func TestEngineerBoardsUpBreachWithWoodGate(t *testing.T) {
 	s := newTestGame()
 	giveTurn(t, s, SideDefender)
 	col := WallFirstCol + 2
-	s.segment(col).HP = 0
+	s.segmentCol(col).HP = 0
 	s.supplies[SideDefender] = 100
 	eng := s.spawn(SideDefender, UnitEngineer, Point{col, WalkRow})
 
@@ -3666,7 +3667,7 @@ func TestEngineerBoardsUpBreachWithWoodGate(t *testing.T) {
 		To: Point{col, WallRow}}); err != nil {
 		t.Fatalf("деревянные ворота: %v", err)
 	}
-	seg := s.segment(col)
+	seg := s.segmentCol(col)
 	if seg.Kind != SegWoodGate || seg.HP != WoodGateHP || seg.Open {
 		t.Fatalf("сегмент %s, %d HP, решётка %v", seg.Kind, seg.HP, seg.Open)
 	}
@@ -3675,7 +3676,7 @@ func TestEngineerBoardsUpBreachWithWoodGate(t *testing.T) {
 	}
 
 	// На месте замковых ворот — нельзя, даже когда там пролом.
-	s.segment(GateColLeft).HP = 0
+	s.segmentCol(GateColLeft).HP = 0
 	gateEng := s.spawn(SideDefender, UnitEngineer, Point{GateColLeft, WalkRow})
 	if err := s.Apply(SideDefender, Action{Kind: ActBuild, UnitID: gateEng.ID, Build: "woodgate",
 		To: Point{GateColLeft, WallRow}}); err == nil {
@@ -3834,11 +3835,11 @@ func TestCatapultIsHalfAgainstMasonry(t *testing.T) {
 	}
 
 	// И в деле: прямое попадание снимает с сегмента ровно половину.
-	before := s.segment(col).HP
+	before := s.segmentCol(col).HP
 	if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: cat.ID, To: Point{col, WallRow}}); err != nil {
 		t.Fatalf("обстрел стены: %v", err)
 	}
-	if got, want := before-s.segment(col).HP, full/2; got != want {
+	if got, want := before-s.segmentCol(col).HP, full/2; got != want {
 		t.Fatalf("сегмент потерял %d прочности, ждали %d", got, want)
 	}
 
@@ -3870,12 +3871,12 @@ func TestRamReachesGateOverBridgeThenFascines(t *testing.T) {
 	if err := s.Apply(SideAttackerA, Action{Kind: ActMove, UnitID: ram.ID, To: ditch}); err != nil {
 		t.Fatalf("таран на мост: %v", err)
 	}
-	hp := s.segment(col).HP
+	hp := s.segmentCol(col).HP
 	if err := s.Apply(SideAttackerA, Action{Kind: ActAttack, UnitID: ram.ID, To: gate}); err != nil {
 		t.Fatalf("удар тарана по воротам: %v", err)
 	}
-	if s.segment(col).HP >= hp {
-		t.Fatalf("ворота целы: было %d, стало %d", hp, s.segment(col).HP)
+	if s.segmentCol(col).HP >= hp {
+		t.Fatalf("ворота целы: было %d, стало %d", hp, s.segmentCol(col).HP)
 	}
 
 	// Замок сбивает мост — и вода возвращается вместе с тараном в ней.
@@ -4307,9 +4308,13 @@ func TestMilitiaExplainsWhyBlocked(t *testing.T) {
 func TestMetaDescribesEveryTileAndStructure(t *testing.T) {
 	m := NewMeta()
 	need := map[string]bool{"woodgate": true, "breach": true}
-	for _, row := range m.Tiles {
-		for _, ch := range row {
-			need[string(ch)] = true
+	// Описания нужны клеткам обеих карт: на второй есть река и арка,
+	// которых на «Теснине» нет.
+	for _, bm := range m.Boards {
+		for _, row := range bm.Tiles {
+			for _, ch := range row {
+				need[string(ch)] = true
+			}
 		}
 	}
 	for key := range need {

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"log/slog"
+	"siege/internal/game"
 	"sync"
 	"time"
 )
@@ -50,8 +51,9 @@ func NewManager(opts Options, log *slog.Logger) *Manager {
 	return &Manager{opts: opts, log: log, rooms: map[string]*Room{}}
 }
 
-// Create открывает новую комнату.
-func (m *Manager) Create(mode Mode) (*Room, error) {
+// Create открывает новую комнату на выбранной карте. Пустой ключ карты —
+// классическая «Теснина».
+func (m *Manager) Create(mode Mode, mapKey string) (*Room, error) {
 	if mode != ModeOnline && mode != ModeHotseat {
 		return nil, ErrBadMode
 	}
@@ -62,9 +64,11 @@ func (m *Manager) Create(mode Mode) (*Room, error) {
 	}
 	id := m.freeIDLocked()
 	r := newRoom(id, mode, m.opts.TurnTimeout)
+	r.board = game.BoardByKey(mapKey)
 	r.botDelay, r.log = m.opts.BotDelay, m.log
 	m.rooms[id] = r
-	m.log.Info("комната создана", "room", id, "mode", string(mode), "rooms", len(m.rooms))
+	m.log.Info("комната создана", "room", id, "mode", string(mode),
+		"map", r.board.Key, "rooms", len(m.rooms))
 	return r, nil
 }
 

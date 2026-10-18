@@ -17,6 +17,10 @@ const (
 	BuildFascine                        // настил из вязанок: переправа через ров
 	BuildPalisade                       // частокол осаждающих: тот же, только их
 	BuildBridge                         // мост напротив ворот: ничей, стоит с начала осады
+	// BuildFort — форпост у истока реки на «Разделённом замке». Ничей,
+	// стоит поперёк ручья с первого дня: это и верхняя переправа, и
+	// запруда. Кто на нём стоит, тот управляет водой ниже по течению.
+	BuildFort
 )
 
 // Внутренние имена — ключи протокола, и у замкового частокола он остался
@@ -35,6 +39,7 @@ var buildingNames = map[BuildingKind]string{
 	BuildFascine:    "fascine",
 	BuildPalisade:   "palisade",
 	BuildBridge:     "bridge",
+	BuildFort:       "fort",
 }
 
 var buildingLabels = map[BuildingKind]string{
@@ -49,6 +54,7 @@ var buildingLabels = map[BuildingKind]string{
 	BuildFascine:    "Фашины",
 	BuildPalisade:   "Частокол",
 	BuildBridge:     "Мост",
+	BuildFort:       "Форпост",
 }
 
 func (k BuildingKind) String() string { return buildingNames[k] }
@@ -78,6 +84,8 @@ func buildingHP(k BuildingKind) int {
 		return PalisadeHP
 	case BuildBridge:
 		return BridgeHP
+	case BuildFort:
+		return FortHP
 	}
 	return 10
 }
@@ -91,7 +99,9 @@ func (k BuildingKind) Enterable() bool { return k == BuildTower }
 // машины, которым внутрь вышки хода нет. Настилов два: брошенные в ров
 // вязанки и мост у ворот. Через ров проходят только по ним — вода
 // непроходима, см. tilePassable.
-func (k BuildingKind) Deck() bool { return k == BuildFascine || k == BuildBridge }
+func (k BuildingKind) Deck() bool {
+	return k == BuildFascine || k == BuildBridge || k == BuildFort
+}
 
 // Building — постройка на карте. Занимает клетку и не пускает через себя
 // (кроме наблюдательного пункта, см. Enterable).
@@ -115,8 +125,10 @@ type Trap struct {
 }
 
 // startingBuildings — что стоит на карте в начале осады. Расстановка
-// зеркальна: преимущество одного из осаждающих ломало бы всю игру.
-func startingBuildings(nextID func() int) []*Building {
+// симметрична: преимущество одного из осаждающих ломало бы всю игру.
+// Где что стоит, знает сама доска — иначе вторую карту пришлось бы вписывать
+// сюда условиями.
+func (b *Board) startingBuildings(nextID func() int) []*Building {
 	add := func(out []*Building, kind BuildingKind, owner Side, p Point) []*Building {
 		return append(out, &Building{
 			ID: nextID(), Kind: kind, Owner: owner, Pos: p,
@@ -124,17 +136,27 @@ func startingBuildings(nextID func() int) []*Building {
 		})
 	}
 	var out []*Building
-	// Замок: двое казарм по флангам двора.
-	out = add(out, BuildBarracks, SideDefender, Point{WallFirstCol + 2, CourtRowFirst + 1})
-	out = add(out, BuildBarracks, SideDefender, Point{WallLastCol - 2, CourtRowFirst + 1})
+	// Замок: казармы по флангам двора.
+	for _, p := range b.barracks {
+		out = add(out, BuildBarracks, SideDefender, p)
+	}
 	// Осаждающим — по мастерской в глубине лагеря.
-	out = add(out, BuildWorkshop, SideAttackerA, Point{3, CampRowLast})
-	out = add(out, BuildWorkshop, SideAttackerB, Point{Cols - 4, CampRowLast})
-	// Мост напротив ворот: две клетки рва, ничьи. Единственная переправа,
-	// которая есть у осады с первого дня, — и первое, что защитник захочет
+	for _, side := range []Side{SideAttackerA, SideAttackerB} {
+		if p, ok := b.workshops[side]; ok {
+			out = add(out, BuildWorkshop, side, p)
+		}
+	}
+	// Мосты напротив ворот: клетки воды, ничьи. Единственные переправы,
+	// которые есть у осады с первого дня, — и первое, что защитник захочет
 	// сломать, чтобы вернуть воду под стену.
-	out = add(out, BuildBridge, SideNeutral, Point{GateColLeft, MoatRow})
-	out = add(out, BuildBridge, SideNeutral, Point{GateColRight, MoatRow})
+	for _, p := range b.decks {
+		out = add(out, BuildBridge, SideNeutral, p)
+	}
+	// Форпост у истока реки: ничей, стоит поперёк ручья. Кто его держит,
+	// тот держит и верхнюю переправу.
+	for _, p := range b.fort {
+		out = add(out, BuildFort, SideNeutral, p)
+	}
 	// Готовых вышек на карте нет: наблюдательные пункты стороны ставят сами.
 	return out
 }

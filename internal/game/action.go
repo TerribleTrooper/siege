@@ -33,7 +33,21 @@ type Action struct {
 	Build   string     `json:"build,omitempty"`   // trap | barricade | repair | outpost
 	//        ещё для build: watchpost | woodgate | fascine | warehouse
 	//        для construct: barracks | arrowTower | forge | warehouse
-	Col int `json:"col,omitempty"` // столбец сегмента стены
+	// Col — столбец сегмента стены. Так кладку адресует протокол
+	// «Теснины», где стена — ряд. На карте с кольцом столбца мало, и
+	// сегмент называют клеткой: см. At.
+	Col int `json:"col,omitempty"`
+	// At — клетка сегмента стены. Если задана, Col не смотрят.
+	At Point `json:"at,omitempty"`
+}
+
+// segmentOf — сегмент, к которому относится действие: по клетке, а если её
+// не прислали — по столбцу, как делает старый клиент на «Теснине».
+func (s *State) segmentOf(a Action) *WallSegment {
+	if a.At != (Point{}) {
+		return s.segment(a.At)
+	}
+	return s.segmentCol(a.Col)
 }
 
 // Apply — единственная точка изменения состояния.
@@ -101,7 +115,7 @@ func (s *State) spendAP(n int) error {
 // поэтому и башня, и ров считаются проходимыми: для конкретного отряда есть
 // passableFog.
 func (s *State) passable(side Side, p Point) bool {
-	if !p.InBounds() || s.unitAt(p) != nil || s.blockedByBuilding(nil, p) {
+	if !s.b.In(p) || s.unitAt(p) != nil || s.blockedByBuilding(nil, p) {
 		return false
 	}
 	return s.tilePassable(p)
@@ -128,12 +142,12 @@ func (s *State) blockedByBuilding(u *Unit, p Point) bool {
 // passableFog — то же, но чужой отряд в тумане путь не перекрывает: о нём
 // ещё не знают. Столкновение обнаружится при входе на клетку.
 func (s *State) passableFog(mover *Unit, p Point, vis map[Point]bool) bool {
-	if !p.InBounds() || s.blockedByBuilding(mover, p) {
+	if !s.b.In(p) || s.blockedByBuilding(mover, p) {
 		return false
 	}
 	// Король и его стража ходят по замку, но не наружу: приз осады не
 	// убегает от осады, а храмовники не бросают приз.
-	if mover.Spec().Bound && !IsInsideCastle(p) {
+	if mover.Spec().Bound && !s.b.IsInsideCastle(p) {
 		return false
 	}
 	side := mover.Owner
@@ -158,11 +172,11 @@ func (s *State) tilePassable(p Point) bool {
 	if s.moatOpen(p) {
 		return false
 	}
-	switch TileAt(p) {
+	switch s.b.TileAt(p) {
 	case TileCliff, TileRavine:
 		return false
 	case TileWall:
-		seg := s.segment(p.X)
+		seg := s.segment(p)
 		return seg != nil && seg.Passable()
 	case TileWalk, TileCourtyard:
 		return true // попасть сюда можно только через пролом или ворота
@@ -360,8 +374,8 @@ func (s *State) doAttack(side Side, a Action) error {
 	// в проломе и в открытых воротах стоят ногами, и такой отряд — цель,
 	// а не часть кладки. Иначе он оказывался неуязвимым: удар по клетке
 	// уходил в сегмент, а по пролому не уходил вовсе.
-	if TileAt(a.To) == TileWall && s.unitAt(a.To) == nil {
-		seg := s.segment(a.To.X)
+	if s.b.TileAt(a.To) == TileWall && s.unitAt(a.To) == nil {
+		seg := s.segment(a.To)
 		if seg == nil || seg.Breached() {
 			return ErrBadTarget
 		}
@@ -484,7 +498,7 @@ func (s *State) seenBy(u *Unit) [4]bool {
 //   - зашёл в заросли, где уже кто-то сидит, — они находят друг друга:
 //     в одном кусте не разминуться.
 func (s *State) settleCover(u *Unit, seenBefore [4]bool) {
-	if !InBush(u.Pos) {
+	if !s.b.InBush(u.Pos) {
 		u.revealAll()
 		return
 	}
@@ -501,7 +515,7 @@ func (s *State) settleCover(u *Unit, seenBefore [4]bool) {
 	// и обнаруживается сам.
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if !InBush(p) {
+		if !s.b.InBush(p) {
 			continue
 		}
 		other := s.unitAt(p)
@@ -546,7 +560,7 @@ func (s *State) coverCut(dmg int, to Point, spec UnitSpec, dist int) int {
 	switch {
 	case s.inTower(to):
 		cut = TowerCoverCut
-	case InBush(to):
+	case s.b.InBush(to):
 		cut = BushCoverCut
 	default:
 		return dmg
@@ -570,7 +584,7 @@ func (s *State) areaStrike(side Side, shooter *Unit, centre Point, spec UnitSpec
 	for dy := -spec.Splash; dy <= spec.Splash; dy++ {
 		for dx := -spec.Splash; dx <= spec.Splash; dx++ {
 			p := centre.Add(dx, dy)
-			if !p.InBounds() {
+			if !s.b.In(p) {
 				continue
 			}
 			dmg, hard := power, sieged
@@ -583,8 +597,8 @@ func (s *State) areaStrike(side Side, shooter *Unit, centre Point, spec UnitSpec
 			// Кто стоит на клетке — тот и получает камень, даже если стоит он
 			// в проломе или в воротах: под ногами кладка, но целью он от этого
 			// быть не перестаёт.
-			if t == nil && TileAt(p) == TileWall && side.IsAttacker() && spec.VsWall > 0 {
-				if seg := s.segment(p.X); seg != nil && !seg.Breached() {
+			if t == nil && s.b.TileAt(p) == TileWall && side.IsAttacker() && spec.VsWall > 0 {
+				if seg := s.segment(p); seg != nil && !seg.Breached() {
 					s.damageWall(side, seg, hard)
 				}
 				continue
@@ -702,7 +716,7 @@ func (s *State) doDeploy(side Side, a Action) error {
 	}
 	// Осадную башню собирают на месте, из брёвен и досок: аванпост такую
 	// махину не выкатит, её везут из лагеря.
-	if spec.CampOnly && CampSide(a.To) != side {
+	if spec.CampOnly && s.b.CampSide(a.To) != side {
 		return fmt.Errorf("%w: %s собирают только в лагере", ErrBadTarget, spec.Label)
 	}
 	if s.unitAt(a.To) != nil {
@@ -722,7 +736,7 @@ func (s *State) doDeploy(side Side, a Action) error {
 
 func (s *State) deployZone(side Side, p Point) bool {
 	if side == SideDefender {
-		switch TileAt(p) {
+		switch s.b.TileAt(p) {
 		case TileWalk, TileCourtyard:
 			return true
 		}
@@ -730,7 +744,7 @@ func (s *State) deployZone(side Side, p Point) bool {
 	}
 	// Осаждающий нанимает в своём лагере — или у собственного аванпоста,
 	// если успел его поставить.
-	if CampSide(p) == side {
+	if s.b.CampSide(p) == side {
 		return true
 	}
 	return s.outpostNear(side, p) && s.outpostDeployable(p)
@@ -740,7 +754,7 @@ func (s *State) deployZone(side Side, p Point) bool {
 // поле. Внутрь замка и на стену аванпост никого не телепортирует, в чужой
 // лагерь — тоже, а рудник по-прежнему берут ногами, а не наймом.
 func (s *State) outpostDeployable(p Point) bool {
-	switch TileAt(p) {
+	switch s.b.TileAt(p) {
 	case TileField, TileBush:
 		return s.buildingAt(p) == nil
 	}
@@ -771,7 +785,10 @@ func (s *State) doClimb(side Side, a Action) error {
 	if ladder == nil {
 		return fmt.Errorf("%w: рядом нет лестницы, приставленной к стене", ErrBadTarget)
 	}
-	top := Point{ladder.Pos.X, WalkRow}
+	top, ok := s.ladderTop(ladder)
+	if !ok {
+		return fmt.Errorf("%w: лестница ни к чему не приставлена", ErrBadTarget)
+	}
 	if s.unitAt(top) != nil {
 		return fmt.Errorf("%w: на стене занято", ErrBadTarget)
 	}
@@ -785,6 +802,16 @@ func (s *State) doClimb(side Side, a Action) error {
 	return nil
 }
 
+// ladderTop — куда выводит лестница: боевой ход за тем сегментом, к
+// которому она приставлена.
+func (s *State) ladderTop(ladder *Unit) (Point, bool) {
+	seg := s.wallBeside(ladder.Pos)
+	if seg == nil {
+		return Point{}, false
+	}
+	return s.b.walkBehind(seg.Pos)
+}
+
 // adjacentLadder ищет лестницу рядом с юнитом, приставленную к стене.
 func (s *State) adjacentLadder(from Point) *Unit {
 	for _, off := range neighborOffsets {
@@ -793,10 +820,7 @@ func (s *State) adjacentLadder(from Point) *Unit {
 		if u == nil || u.Type != UnitLadder {
 			continue
 		}
-		if u.Pos.Y != WallRow+1 {
-			continue
-		}
-		if seg := s.segment(u.Pos.X); seg != nil {
+		if s.wallBeside(u.Pos) != nil {
 			return u
 		}
 	}
@@ -859,7 +883,23 @@ func (s *State) canRamp(u *Unit) bool {
 	if u.Spec().Capacity <= 0 || u.Ramp || u.actedTurn == s.turnCounter {
 		return false
 	}
-	return u.Pos.Y == WallRow+1 && s.segment(u.Pos.X) != nil
+	return s.wallBeside(u.Pos) != nil
+}
+
+// wallBeside — сегмент кладки вплотную к клетке, если смотреть снаружи. По
+// нему лезут на стену с лестницы и с осадной башни. На «Теснине» стена
+// всегда над головой, на кольце — с любой стороны, поэтому смотрим по
+// сторонам, а не вверх; изнутри замка приставлять лестницу незачем.
+func (s *State) wallBeside(p Point) *WallSegment {
+	if s.b.IsInsideCastle(p) {
+		return nil
+	}
+	for _, d := range [4][2]int{{0, -1}, {0, 1}, {-1, 0}, {1, 0}} {
+		if seg := s.segment(p.Add(d[0], d[1])); seg != nil {
+			return seg
+		}
+	}
+	return nil
 }
 
 func (s *State) doRamp(side Side, a Action) error {
@@ -896,7 +936,11 @@ func (s *State) doRamp(side Side, a Action) error {
 // падающей доской нельзя — иначе осадная башня выигрывала бы осаду одним
 // действием, стоило королю оказаться на стене.
 func (s *State) crushUnderRamp(tower *Unit) {
-	victim := s.unitAt(Point{tower.Pos.X, WalkRow})
+	top, ok := s.rampTop(tower)
+	if !ok {
+		return
+	}
+	victim := s.unitAt(top)
 	if victim == nil || !areEnemies(tower.Owner, victim.Owner) {
 		return
 	}
@@ -913,10 +957,16 @@ func (s *State) unloadSpots(tower *Unit) []Point {
 	if tower.Spec().Capacity <= 0 || !tower.Ramp {
 		return nil
 	}
+	top, ok := s.rampTop(tower)
+	if !ok {
+		return nil
+	}
+	// Сходят в клетку трапа и в соседние с ней по боевому ходу: не дальше
+	// одного шага вдоль стены.
 	var out []Point
-	for dx := -1; dx <= 1; dx++ {
-		p := Point{tower.Pos.X + dx, WalkRow}
-		if p.X < WallFirstCol || p.X > WallLastCol {
+	for _, d := range neighborOffsets {
+		p := top.Add(d[0], d[1])
+		if p != top && (s.b.TileAt(p) != TileWalk || Chebyshev(p, top) > 1) {
 			continue
 		}
 		if s.unitAt(p) != nil || s.blockedByBuilding(nil, p) {
@@ -924,8 +974,21 @@ func (s *State) unloadSpots(tower *Unit) []Point {
 		}
 		out = append(out, p)
 	}
+	if s.unitAt(top) == nil && !s.blockedByBuilding(nil, top) {
+		out = append(out, top)
+	}
 	sortPoints(out)
 	return out
+}
+
+// rampTop — куда ложится трап осадной башни: боевой ход за тем сегментом, к
+// которому башня подведена.
+func (s *State) rampTop(tower *Unit) (Point, bool) {
+	seg := s.wallBeside(tower.Pos)
+	if seg == nil {
+		return Point{}, false
+	}
+	return s.b.walkBehind(seg.Pos)
 }
 
 // exitSpots — куда экипаж может просто вылезти из башни: на соседние клетки
@@ -941,7 +1004,7 @@ func (s *State) exitSpots(tower *Unit) []Point {
 	var out []Point
 	for _, off := range neighborOffsets {
 		p := tower.Pos.Add(off[0], off[1])
-		if !p.InBounds() || TileAt(p) == TileWall || IsInsideCastle(p) {
+		if !s.b.In(p) || s.b.TileAt(p) == TileWall || s.b.IsInsideCastle(p) {
 			continue
 		}
 		if s.unitAt(p) != nil || s.blockedByBuilding(nil, p) || !s.tilePassable(p) {
@@ -1015,7 +1078,7 @@ func (s *State) spillCargo(killer Side, carrier *Unit) {
 // потом на любую соседнюю проходимую.
 func (s *State) escapeSpot(u *Unit, from Point) (Point, bool) {
 	try := func(p Point) bool {
-		return p.InBounds() && s.unitAt(p) == nil && !s.blockedByBuilding(u, p) &&
+		return s.b.In(p) && s.unitAt(p) == nil && !s.blockedByBuilding(u, p) &&
 			s.tilePassable(p)
 	}
 	if try(from) {
@@ -1041,10 +1104,10 @@ func (s *State) chargeTargets(u *Unit) []Point {
 	var out []Point
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if !p.InBounds() || TileAt(p) != TileWall {
+		if !s.b.In(p) || s.b.TileAt(p) != TileWall {
 			continue
 		}
-		if seg := s.segment(p.X); seg != nil && !seg.Breached() {
+		if seg := s.segment(p); seg != nil && !seg.Breached() {
 			out = append(out, p)
 		}
 	}
@@ -1079,7 +1142,7 @@ func (s *State) doCharge(side Side, a Action) error {
 	if !containsPoint(targets, at) {
 		return fmt.Errorf("%w: заряд закладывают под соседний целый сегмент", ErrBadTarget)
 	}
-	seg := s.segment(at.X)
+	seg := s.segment(at)
 	if err := s.spendAP(1); err != nil {
 		return err
 	}
@@ -1210,7 +1273,7 @@ func (s *State) fascineSpots(u *Unit) []Point {
 	}
 	var out []Point
 	for _, off := range neighborOffsets {
-		if p := u.Pos.Add(off[0], off[1]); p.InBounds() && s.moatOpen(p) {
+		if p := u.Pos.Add(off[0], off[1]); s.b.In(p) && s.moatOpen(p) {
 			out = append(out, p)
 		}
 	}
@@ -1283,7 +1346,7 @@ func (s *State) mantletSpots(u *Unit) []Point {
 	var out []Point
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if !p.InBounds() || IsInsideCastle(p) || TileAt(p) == TileWall {
+		if !s.b.In(p) || s.b.IsInsideCastle(p) || s.b.TileAt(p) == TileWall {
 			continue
 		}
 		if s.unitAt(p) != nil || s.blockedByBuilding(nil, p) || !s.tilePassable(p) {
@@ -1342,7 +1405,7 @@ func (s *State) campWarehouseSpots(u *Unit) []Point {
 	var out []Point
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if p.InBounds() && CampSide(p) == u.Owner && s.outdoorBuildable(p) {
+		if s.b.In(p) && s.b.CampSide(p) == u.Owner && s.outdoorBuildable(p) {
 			out = append(out, p)
 		}
 	}
@@ -1360,7 +1423,7 @@ func (s *State) buildCampWarehouse(side Side, u *Unit, at Point) error {
 	if n := s.countBuildings(side, BuildWarehouse); n >= MaxWarehouse {
 		return fmt.Errorf("%w: складов больше %d не держат", ErrBadTarget, MaxWarehouse)
 	}
-	if CampSide(at) != side || !s.outdoorBuildable(at) {
+	if s.b.CampSide(at) != side || !s.outdoorBuildable(at) {
 		return fmt.Errorf("%w: склад ставят на свободной клетке своего лагеря", ErrBadTarget)
 	}
 	if s.supplies[side] < WarehouseCost {
@@ -1382,7 +1445,7 @@ func (s *State) buildCampWarehouse(side Side, u *Unit, at Point) error {
 // outdoorBuildable — клетки, где инженеры могут что-то поставить: только
 // открытое поле, не стена и не двор.
 func (s *State) outdoorBuildable(p Point) bool {
-	switch TileAt(p) {
+	switch s.b.TileAt(p) {
 	case TileField, TileBush, TileMine, TileFarm, TileCamp:
 	default:
 		return false
@@ -1427,7 +1490,7 @@ func (s *State) fenceLine(from, at Point) []Point {
 	for i := 1; i <= (BarricadeSpan-1)/2; i++ {
 		for _, sgn := range []int{-1, 1} {
 			p := at.Add(px*i*sgn, py*i*sgn)
-			if p.InBounds() && s.outdoorBuildable(p) {
+			if s.b.In(p) && s.outdoorBuildable(p) {
 				out = append(out, p)
 			}
 		}
@@ -1472,10 +1535,10 @@ func (s *State) woodGateSpots(u *Unit) []Point {
 	var out []Point
 	for _, off := range neighborOffsets {
 		p := u.Pos.Add(off[0], off[1])
-		if !p.InBounds() || TileAt(p) != TileWall || IsCastleGate(p.X) {
+		if !s.b.In(p) || s.b.TileAt(p) != TileWall || s.b.IsCastleGate(p) {
 			continue
 		}
-		seg := s.segment(p.X)
+		seg := s.segment(p)
 		if seg == nil || !seg.Breached() || s.unitAt(p) != nil {
 			continue
 		}
@@ -1492,7 +1555,7 @@ func (s *State) buildWoodGate(side Side, u *Unit, at Point) error {
 	if side != SideDefender {
 		return fmt.Errorf("%w: ворота ставит замок", ErrBadTarget)
 	}
-	if IsCastleGate(at.X) {
+	if s.b.IsCastleGate(at) {
 		return fmt.Errorf("%w: на месте замковых ворот деревянные не ставят", ErrBadTarget)
 	}
 	if !containsPoint(s.woodGateSpots(u), at) {
@@ -1506,7 +1569,7 @@ func (s *State) buildWoodGate(side Side, u *Unit, at Point) error {
 	}
 	s.supplies[side] -= WoodGateCost
 	u.actedTurn = s.turnCounter
-	seg := s.segment(at.X)
+	seg := s.segment(at)
 	seg.Kind = SegWoodGate
 	seg.HP, seg.MaxHP = WoodGateHP, WoodGateHP
 	seg.Open = false
@@ -1540,7 +1603,7 @@ func (s *State) watchPostSpots(u *Unit) []Point {
 	}
 	var out []Point
 	for _, off := range neighborOffsets {
-		if p := u.Pos.Add(off[0], off[1]); p.InBounds() && s.outdoorBuildable(p) {
+		if p := u.Pos.Add(off[0], off[1]); s.b.In(p) && s.outdoorBuildable(p) {
 			out = append(out, p)
 		}
 	}
@@ -1596,12 +1659,12 @@ func (s *State) canOutpost(u *Unit) bool {
 // outpostSpot — годится ли клетка под аванпост. Только открытое поле и не
 // вплотную к стене: аванпост — тыловой лагерь, а не штурмовая площадка.
 func (s *State) outpostSpot(p Point) bool {
-	switch TileAt(p) {
+	switch s.b.TileAt(p) {
 	case TileField, TileBush:
 	default:
 		return false
 	}
-	if p.Y < WallRow+OutpostWallGap {
+	if s.b.wallDistance(p) < OutpostWallGap {
 		return false
 	}
 	return s.unitAt(p) == nil && s.buildingAt(p) == nil && s.trapAt(p) == nil
@@ -1614,7 +1677,7 @@ func (s *State) outpostSpots(u *Unit) []Point {
 	}
 	var out []Point
 	for _, off := range neighborOffsets {
-		if p := u.Pos.Add(off[0], off[1]); p.InBounds() && s.outpostSpot(p) {
+		if p := u.Pos.Add(off[0], off[1]); s.b.In(p) && s.outpostSpot(p) {
 			out = append(out, p)
 		}
 	}
@@ -1666,7 +1729,7 @@ func (s *State) buildOutpost(side Side, u *Unit, at Point) error {
 // счёт, что и отстройка: два раза за ход на обе руки, иначе дыры
 // закрывались бы быстрее, чем их делают.
 func (s *State) engineerRepair(side Side, u *Unit, at Point) error {
-	if TileAt(at) == TileWall {
+	if s.b.TileAt(at) == TileWall {
 		return s.repairWall(side, u, at)
 	}
 	if t := s.unitAt(at); t != nil {
@@ -1731,7 +1794,7 @@ func (s *State) repairWall(side Side, u *Unit, at Point) error {
 	if side != SideDefender {
 		return fmt.Errorf("%w: стену чинит замок", ErrBadTarget)
 	}
-	seg := s.segment(at.X)
+	seg := s.segment(at)
 	if seg == nil {
 		return ErrBadTarget
 	}
@@ -1884,7 +1947,7 @@ var CourtBuildOrder = []string{"barracks", "arrowTower", "forge", "warehouse"}
 // оставляем воздух: иначе замок замуровал бы его постройками и выиграл
 // осаду, ни разу не подравшись.
 func (s *State) courtBuildable(p Point) bool {
-	if TileAt(p) != TileCourtyard {
+	if s.b.TileAt(p) != TileCourtyard {
 		return false
 	}
 	if k := s.King(SideDefender); k != nil && Chebyshev(p, k.Pos) <= KingClearance {
@@ -1896,11 +1959,9 @@ func (s *State) courtBuildable(p Point) bool {
 // courtSpots — весь свободный двор: клиент подсвечивает его при стройке.
 func (s *State) courtSpots() []Point {
 	var out []Point
-	for y := CourtRowFirst; y <= CourtRowLast; y++ {
-		for x := WallFirstCol; x <= WallLastCol; x++ {
-			if p := (Point{x, y}); s.courtBuildable(p) {
-				out = append(out, p)
-			}
+	for _, p := range s.b.InsideTiles() {
+		if s.courtBuildable(p) {
+			out = append(out, p)
 		}
 	}
 	sortPoints(out)
@@ -1952,7 +2013,7 @@ func (s *State) doAbility(side Side, a Action) error {
 	if a.Ability == "militia" {
 		return s.abilityMilitia()
 	}
-	seg := s.segment(a.Col)
+	seg := s.segmentOf(a)
 	if seg == nil {
 		return fmt.Errorf("%w: нет такого сегмента стены", ErrBadTarget)
 	}
@@ -1983,7 +2044,7 @@ func (s *State) abilityGate(seg *WallSegment) error {
 	}
 	// Опустить решётку на чужую голову нельзя: сначала выбейте отряд из
 	// проёма. Поднять её всегда можно: пока она опущена, в проёме никого нет.
-	if seg.Open && s.unitAt(Point{seg.Col, WallRow}) != nil {
+	if seg.Open && s.unitAt(seg.Pos) != nil {
 		return fmt.Errorf("%w: в проёме стоит отряд — решётку не опустить", ErrBadTarget)
 	}
 	if err := s.spendAP(GateAPCost); err != nil {
@@ -2034,29 +2095,20 @@ func PitchTile(col int) Point {
 	return Point{col, WallRow + 1}
 }
 
-// PitchTiles — все клетки, куда замок может плеснуть смолой. Клиент рисует
-// по ним подсветку, сервер по ним же проверяет.
-func PitchTiles() []Point {
-	out := make([]Point, 0, SegmentCount)
-	for col := WallFirstCol; col <= WallLastCol; col++ {
-		out = append(out, PitchTile(col))
-	}
-	return out
-}
+// PitchTiles — все клетки, куда замок может плеснуть смолой на классической
+// карте. Клиент берёт их из меты, где они уже от нужной доски.
+func PitchTiles() []Point { return Classic.PitchTiles() }
 
 // militiaSpots — где строится ополчение: свободные клетки замка, ближайшие
 // к королю. Горожане собираются вокруг него, а не там, где удобно игроку, —
 // и это значит, что король сам задаёт, куда придёт подкрепление.
 func (s *State) militiaSpots(n int) []Point {
 	var out []Point
-	for y := CourtRowFirst; y <= WalkRow; y++ {
-		for x := WallFirstCol; x <= WallLastCol; x++ {
-			p := Point{x, y}
-			if !IsInsideCastle(p) || s.unitAt(p) != nil || s.buildingAt(p) != nil {
-				continue
-			}
-			out = append(out, p)
+	for _, p := range s.b.InsideTiles() {
+		if s.unitAt(p) != nil || s.buildingAt(p) != nil {
+			continue
 		}
+		out = append(out, p)
 	}
 	sortPoints(out)
 	if king := s.King(SideDefender); king != nil {
@@ -2150,13 +2202,13 @@ func (s *State) abilityPitch(seg *WallSegment) error {
 	}
 	s.supplies[SideDefender] -= PitchCost
 	s.notePitch(SideDefender)
-	centre := PitchTile(seg.Col)
+	centre := s.pitchTile(seg)
 	for _, u := range append([]*Unit{}, s.Units...) {
 		if !u.Owner.IsAttacker() {
 			continue
 		}
 		// Смола достаёт только тех, кто снаружи: внутрь замка она не затекает.
-		if u.Pos.Y < WallRow || Chebyshev(u.Pos, centre) > 1 {
+		if s.b.IsInsideCastle(u.Pos) || Chebyshev(u.Pos, centre) > 1 {
 			continue
 		}
 		s.hurt(u, PitchDamage)
@@ -2175,7 +2227,7 @@ func (s *State) abilityRebuild(seg *WallSegment) error {
 	if !seg.Breached() {
 		return fmt.Errorf("%w: отстраивают только пролом — целый сегмент не трогают", ErrBadTarget)
 	}
-	if s.unitAt(Point{seg.Col, WallRow}) != nil {
+	if s.unitAt(seg.Pos) != nil {
 		return fmt.Errorf("%w: в проломе стоит отряд", ErrBadTarget)
 	}
 	cost := s.rebuildCost(SideDefender)
@@ -2193,7 +2245,7 @@ func (s *State) abilityRebuild(seg *WallSegment) error {
 	// Поднимается то, что стояло здесь в начале осады: деревянная створка,
 	// которой пролом заколачивали до того, отстройкой не воспроизводится —
 	// за тридцать пять припасов замок получает кладку.
-	seg.Kind, seg.MaxHP = originalSegment(seg.Col)
+	seg.Kind, seg.MaxHP = s.b.originalSegment(seg.Pos)
 	seg.HP = seg.MaxHP
 	seg.Open = false
 	return nil

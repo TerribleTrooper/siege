@@ -25,8 +25,12 @@ type YouInfo struct {
 // Snapshot — то, что клиент получает по SSE. Содержит отфильтрованный вид
 // партии: скрытую информацию чужой стороны сюда не кладём.
 type Snapshot struct {
-	Room        string       `json:"room"`
-	Mode        Mode         `json:"mode"`
+	Room string `json:"room"`
+	Mode Mode   `json:"mode"`
+	// Map — ключ карты комнаты. Нужен уже в лобби: игроки должны видеть,
+	// на какой карте собираются играть, до того как партия началась.
+	Map         string       `json:"map"`
+	MapName     string       `json:"mapName"`
 	Phase       string       `json:"phase"`
 	Players     []PlayerInfo `json:"players"`
 	NeedPlayers int          `json:"needPlayers"`
@@ -43,6 +47,8 @@ func (r *Room) encodeLocked(token string) []byte {
 	snap := Snapshot{
 		Room:    r.ID,
 		Mode:    r.Mode,
+		Map:     r.board.Key,
+		MapName: r.board.Name,
 		Phase:   "lobby",
 		NowMs:   time.Now().UnixMilli(),
 		Players: []PlayerInfo{},
